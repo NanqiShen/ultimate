@@ -16,6 +16,8 @@ from typing import Any
 
 import yaml
 
+from ultimate.paths import environment_root
+
 
 DEFAULT_CHECKSUM_MAX_BYTES = 256 * 1024 * 1024
 INPUT_PATH_KEYS = (
@@ -277,21 +279,24 @@ def _sha256(path: Path) -> str:
 def _write_rerun_script(path: Path, *, run_dir: Path, config_path: Path | None) -> Path:
     config_value = str(config_path or (run_dir / "config_snapshot.yaml"))
     code_root = Path(__file__).resolve().parents[2]
+    env_root = environment_root(code_root)
     content = f"""#!/usr/bin/env bash
 set -euo pipefail
 
 RUN_DIR="{run_dir}"
 CONFIG_PATH="{config_value}"
 PROJECT_ROOT="${{ULTIMATE_ROOT:-{code_root}}}"
-ENV_PREFIX="${{ULTIMATE_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-core}}"
+ENV_ROOT="${{ULTIMATE_ENV_ROOT:-{env_root}}}"
+ENV_PREFIX="${{ULTIMATE_ENV:-$ENV_ROOT/ultimate-core}}"
 CONDA_SH="${{CONDA_SH:-}}"
 MODE="${{1:-report}}"
 
 if [ -z "$CONDA_SH" ]; then
   for candidate in \
-    "$PROJECT_ROOT/.conda/etc/profile.d/conda.sh" \
-    "$PROJECT_ROOT/miniconda3/etc/profile.d/conda.sh" \
-    "$HOME/miniconda3/etc/profile.d/conda.sh"
+    "$ENV_ROOT/../micromamba/etc/profile.d/micromamba.sh" \
+    "$ENV_ROOT/../mambaforge/etc/profile.d/conda.sh" \
+    "$ENV_ROOT/../miniforge3/etc/profile.d/conda.sh" \
+    "$ENV_ROOT/../miniconda3/etc/profile.d/conda.sh"
   do
     if [ -f "$candidate" ]; then
       CONDA_SH="$candidate"
@@ -303,7 +308,11 @@ fi
 if [ -n "$CONDA_SH" ] && [ -f "$CONDA_SH" ]; then
   # shellcheck disable=SC1090
   source "$CONDA_SH"
-  conda activate "$ENV_PREFIX"
+  if command -v conda >/dev/null 2>&1; then
+    conda activate "$ENV_PREFIX"
+  elif command -v micromamba >/dev/null 2>&1; then
+    micromamba activate "$ENV_PREFIX"
+  fi
 elif [ -x "$ENV_PREFIX/bin/python" ]; then
   export PATH="$ENV_PREFIX/bin:$PATH"
 fi

@@ -1,15 +1,17 @@
 from __future__ import annotations
-from ultimate.paths import environment_root, external_root
 
 import csv
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from ultimate.paths import environment_root, external_root
 
 
 @dataclass(frozen=True)
@@ -338,6 +340,13 @@ def _command_available(command: str, bin_dirs: list[Path]) -> bool:
     return any((bin_dir / command).exists() for bin_dir in bin_dirs) or shutil.which(command) is not None
 
 
+EXTERNAL_DATA_CHECK_ENV = {
+    "nsclc_h5ad": "ULTIMATE_SINGLECELL_NSCLC_H5AD",
+    "dna_bam_0518": "ULTIMATE_SINGLECELL_DNA_BAM_0518",
+    "mtdna_0518": "ULTIMATE_SINGLECELL_MTDNA_VARIANTS_0518",
+}
+
+
 def _check_data(root: Path, checks: tuple[str, ...]) -> dict[str, bool]:
     paths = {
         "nsclc_h5ad": Path(str(external_root() / 'nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad')),
@@ -351,6 +360,12 @@ def _check_data(root: Path, checks: tuple[str, ...]) -> dict[str, bool]:
         "public_spatial": root / "public_data" / "spatial" / "manifest.json",
         "public_cite_seq": root / "public_data" / "cite_seq" / "manifest.json",
     }
+    # External datasets differ per site; allow an explicit override instead of
+    # rewriting the default layout for every deployment.
+    for check, env_var in EXTERNAL_DATA_CHECK_ENV.items():
+        value = os.environ.get(env_var)
+        if value:
+            paths[check] = Path(os.path.expandvars(value)).expanduser()
     return {check: _data_check_passed(paths.get(check, root / check)) for check in checks}
 
 

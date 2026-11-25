@@ -87,6 +87,7 @@ def run_bulk_module(
     module_cfg = (config.get("modules") or {}).get(module_name) or {}
     design = config.get("design") or {}
     input_matrix = module_cfg.get("input_matrix")
+    require_real_inputs_for_production(config, module_name, module_cfg, input_matrix)
     inputs = _load_bulk_inputs(module_name, module_cfg, samples)
     level = classify_analysis_level(
         requested_level=module_cfg.get("analysis_level"),
@@ -278,6 +279,49 @@ def run_bulk_module(
 
 def bulk_requirement_checks(module_name: str) -> dict[str, bool]:
     return {pkg: importlib.util.find_spec(pkg) is not None for pkg in BULK_PYTHON_REQUIREMENTS.get(module_name, ())}
+
+
+def _configuration_run_mode(config: dict[str, Any]) -> str:
+    project = config.get("project") or {}
+    return str(project.get("run_mode") or "interactive").strip().lower()
+
+
+def _declared_demo(config: dict[str, Any], module_cfg: dict[str, Any]) -> bool:
+    """True only when the operator explicitly declared demo data."""
+    return _module_is_demo(config, module_cfg) is True
+
+
+def require_real_inputs_for_production(
+    config: dict[str, Any],
+    module_name: str,
+    module_cfg: dict[str, Any],
+    input_matrix: Any,
+) -> None:
+    """Refuse to fabricate a matrix for a production run.
+
+    Demo matrices are acceptable for interactive smoke runs and for modules the
+    operator explicitly marks ``is_demo``. A production run that silently falls
+    back to generated numbers would produce delivery-looking artefacts with no
+    evidence behind them.
+    """
+    if _configuration_run_mode(config) != "production":
+        return
+    if _declared_demo(config, module_cfg):
+        return
+    candidates = (
+        ("input_matrix", input_matrix),
+        ("raw.output_matrix", (module_cfg.get("raw") or {}).get("output_matrix")),
+        ("matrix_path", module_cfg.get("matrix_path")),
+    )
+    for field, value in candidates:
+        if value and Path(str(value)).expanduser().is_file():
+            return
+    declared = ", ".join(str(value) for _, value in candidates if value) or "no matrix path declared"
+    raise ValueError(
+        f"module {module_name!r} is configured for run_mode=production but no real input matrix exists "
+        f"({declared}); refusing to generate a demo matrix. Provide the upstream matrix, "
+        f"declare is_demo=true, or run with --run-mode interactive."
+    )
 
 
 def _module_is_demo(config: dict[str, Any], module_cfg: dict[str, Any]) -> bool | None:
@@ -1027,15 +1071,47 @@ def _single_gene_tables(
 
 def _clinical_assoc_tables(matrix: pd.DataFrame, clinical: pd.DataFrame, tables_dir: Path) -> dict[str, str]:
     assoc = tables_dir / "clinical_feature_associations.tsv"
-    numeric_clinical = clinical.select_dtypes(include=[np.number])
+    numeric_clinical = _numeric_clinical_by_sample(clinical)
+    if matrix.shape[0] == 0 or not matrix.columns.size:
+        pd.DataFrame([{"feature_id": "", "clinical_variable": "none", "correlation": 0.0, "n_samples": 0}]).to_csv(assoc, sep="\t", index=False)
+        return {"clinical_feature_associations": str(assoc)}
+    sample_ids = matrix.columns.astype(str)
     rows = []
     for feature_id, values in matrix.iterrows():
+        series = pd.Series(values.to_numpy(dtype=float), index=sample_ids)
         for column in numeric_clinical.columns:
-            aligned = numeric_clinical[column].reindex(range(len(values))).to_numpy(dtype=float)
-            if len(aligned) == len(values) and np.nanstd(aligned) > 0:
-                rows.append({"feature_id": feature_id, "clinical_variable": column, "correlation": _safe_corr(values.to_numpy(), aligned)})
-    pd.DataFrame(rows or [{"feature_id": str(matrix.index[0]), "clinical_variable": "none", "correlation": 0.0}]).to_csv(assoc, sep="\t", index=False)
+            # Align on sample_id, never on position: clinical tables are frequently
+            # ordered differently from matrix columns and may miss samples.
+            aligned = numeric_clinical[column].reindex(sample_ids)
+            pair = pd.DataFrame({"feature": series, "clinical": aligned.astype(float)}).dropna()
+            if pair.shape[0] >= 3 and np.nanstd(pair["clinical"].to_numpy()) > 0 and np.nanstd(pair["feature"].to_numpy()) > 0:
+                rows.append(
+                    {
+                        "feature_id": feature_id,
+                        "clinical_variable": column,
+                        "correlation": _safe_corr(pair["feature"].to_numpy(), pair["clinical"].to_numpy()),
+                        "n_samples": int(pair.shape[0]),
+                    }
+                )
+    if not rows:
+        rows = [{"feature_id": str(matrix.index[0]), "clinical_variable": "none", "correlation": 0.0, "n_samples": 0}]
+    pd.DataFrame(rows).to_csv(assoc, sep="\t", index=False)
     return {"clinical_feature_associations": str(assoc)}
+
+
+def _numeric_clinical_by_sample(clinical: pd.DataFrame) -> pd.DataFrame:
+    """Numeric clinical columns indexed by ``sample_id``.
+
+    Falls back to a positional index only when the table carries no sample
+    identifier, which the upstream contract normally guarantees.
+    """
+    numeric = clinical.select_dtypes(include=[np.number])
+    if "sample_id" in clinical.columns:
+        frame = numeric.copy()
+        frame.index = clinical["sample_id"].astype(str).to_numpy()
+        # A duplicated id would make reindex raise; keep the first record.
+        return frame[~frame.index.duplicated(keep="first")]
+    return numeric
 
 
 def _survival_proxy(matrix: pd.DataFrame, clinical: pd.DataFrame, feature_id: str) -> pd.DataFrame:

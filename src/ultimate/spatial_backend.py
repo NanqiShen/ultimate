@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from ultimate.paths import project_root
-
 import json
 import os
 from datetime import datetime, timezone
@@ -27,6 +25,7 @@ from ultimate.modules.common import (
     write_module_report_bundle,
     write_tool_coverage_table,
 )
+from ultimate.paths import cache_root, project_root
 from ultimate.plot_style import apply_clinical_journal_style, save_figure
 
 
@@ -305,7 +304,8 @@ def _load_spatial_data(config: dict[str, Any]) -> dict[str, Any]:
 
 def _load_public_visium(config: dict[str, Any]) -> dict[str, Any]:
     module_cfg = _module_cfg(config)
-    public_dir = Path(str(module_cfg.get("public_data_dir") or project_root() / "public_data" / "spatial"))
+    platform_root = Path(str((config.get("project") or {}).get("server_root") or project_root()))
+    public_dir = Path(str(module_cfg.get("public_data_dir") or cache_root(platform_root) / "public_data" / "spatial"))
     cache_dir = public_dir / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir / "xdg"))

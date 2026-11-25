@@ -10,7 +10,7 @@ def test_v4_1_tool_completeness_audit_script_refreshes_all_indices() -> None:
     text = _script("v4_1_tool_completeness_audit.sbatch")
 
     assert "set -euo pipefail" in text
-    assert "/shared/shen/2026/ultimate" in text
+    assert 'PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"' in text
     assert "audit-tools" in text
     assert "validation-index" in text
     assert "audit-production" in text

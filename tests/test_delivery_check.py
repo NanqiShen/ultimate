@@ -4,11 +4,14 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from ultimate.cli import main
 from ultimate.customer_package import build_customer_package
 from ultimate.delivery_check import run_delivery_check
+from ultimate.demo import init_project
+from ultimate.pipeline import run_pipeline_from_config
 
 
 def test_delivery_check_accepts_production_job_with_required_artifacts(tmp_path: Path) -> None:
@@ -430,3 +433,101 @@ def _write_customer_package(
         "gene\tscore\nA\t1\n" + extra_table_text,
         encoding="utf-8",
     )
+
+
+# --- XieLab path hygiene -----------------------------------------------------
+# The XieLab deployment mounts code and data under /dshare and refuses to build
+# anything under /dhome. Neither prefix existed in the original PKU allow-list,
+# so internal paths leaked into customer packages unnoticed.
+
+XIELAB_LEAK_PATHS = (
+    "/dshare/xielab/analysisdata/TFC/shennq/ultimate",
+    "/dshare/xielab/rawdata/TFC/shennq/fastq",
+    "/dshare/dhome/shennq/scratch",
+)
+
+
+def test_customer_forbidden_tokens_cover_xielab_mounts() -> None:
+    from ultimate.delivery_check import CUSTOMER_FORBIDDEN_TOKENS
+
+    for token in ("/dshare", "/dhome", ".venv"):
+        assert token in CUSTOMER_FORBIDDEN_TOKENS
+
+
+@pytest.mark.parametrize("leaked_path", XIELAB_LEAK_PATHS)
+def test_delivery_check_blocks_xielab_customer_package_leak(tmp_path: Path, leaked_path: str) -> None:
+    job_dir, _ = _write_delivery_ready_job(tmp_path, delivery_scope="customer_delivery")
+    _write_customer_package(job_dir, extra_report_text=f" {leaked_path}")
+
+    manifest = run_delivery_check(job_dir)
+
+    assert manifest["status"] == "blocked"
+    assert "customer_package_no_internal_path_leaks" in manifest["blockers"]
+    failed = [
+        row["check_id"]
+        for row in manifest["checks"]
+        if row["check_id"] == "customer_package_no_internal_path_leaks" and row["status"] == "fail"
+    ]
+    assert failed
+
+
+def test_delivery_check_blocks_xielab_leak_inside_table_artifact(tmp_path: Path) -> None:
+    job_dir, _ = _write_delivery_ready_job(tmp_path, delivery_scope="customer_delivery")
+    _write_customer_package(job_dir, extra_table_text="source\t/dshare/xielab/rawdata/TFC/shennq\n")
+
+    manifest = run_delivery_check(job_dir)
+
+    assert manifest["status"] == "blocked"
+    assert "customer_package_no_internal_path_leaks" in manifest["blockers"]
+
+
+def test_customer_package_sanitizes_xielab_paths(tmp_path: Path) -> None:
+    """Building the package must redact /dshare, /dhome and .venv before delivery."""
+    project = init_project("rnaseq", tmp_path / "xielab_sanitize", demo_data=True)
+    run_manifest = run_pipeline_from_config(Path(project["config_path"]))
+    assert run_manifest.get("output_dir"), run_manifest
+
+    run_dir = Path(run_manifest["output_dir"])
+    job_dir = run_dir.parents[1]
+    # Leak the XieLab mounts into the generated run report, which is the real
+    # input of the customer package builder.
+    report = run_dir / "reports" / "report.html"
+    report.write_text(
+        report.read_text(encoding="utf-8")
+        + "<p>/dshare/xielab/analysisdata/TFC/shennq/ultimate</p>"
+        + "<p>/dshare/dhome/shennq/scratch</p>"
+        + "<p>/opt/site/.venv/bin/python</p>",
+        encoding="utf-8",
+    )
+    package_dir = tmp_path / "customer_surface"
+    manifest = build_customer_package(run_dir=run_dir, output_dir=package_dir)
+    assert manifest["status"] == "ready", manifest
+    assert (package_dir / "report.html").is_file()
+
+    combined = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in package_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".html", ".md", ".tsv", ".txt", ".json"}
+    )
+    assert "/dshare" not in combined
+    assert "/dhome" not in combined
+    assert ".venv" not in combined
+    assert "[internal_path_redacted]" in combined
+
+
+def test_customer_package_sanitize_text_is_idempotent() -> None:
+    """Re-sanitizing a clean package must not change customer-facing text."""
+    from ultimate.customer_package import _sanitize_text
+
+    dirty = "see /dshare/xielab/rawdata/TFC/shennq and /dhome/shennq/.venv/bin/python"
+    once = _sanitize_text(dirty)
+    assert "/dshare" not in once and "/dhome" not in once and ".venv" not in once
+    assert _sanitize_text(once) == once
+
+
+def test_customer_package_sanitize_text_leaves_relative_paths(tmp_path: Path) -> None:
+    """A normal relative artefact path must still survive sanitization."""
+    from ultimate.customer_package import _sanitize_text
+
+    text = "tables/markers.tsv and figures/umap.png"
+    assert _sanitize_text(text).startswith("tables/markers.tsv and figures/umap.png")

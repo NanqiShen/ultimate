@@ -10,7 +10,7 @@ def test_v4_2_customer_trial_script_scope_and_entries() -> None:
     text = _script_text()
 
     assert "set -euo pipefail" in text
-    assert "/shared/shen/2026/ultimate" in text
+    assert 'PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"' in text
     assert "/share/home" not in text
     assert "v4_2_rnaseq_raw_customer_trial" in text
     assert "v4_2_scrna_mtx_customer_trial" in text

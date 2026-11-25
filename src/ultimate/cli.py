@@ -102,8 +102,11 @@ def prepare_batch_command(batch_path: Path, root: Path | None, output_dir: Path 
     required=True,
 )
 def preflight_command(config_path: Path) -> None:
-    loaded = load_config(config_path)
-    manifest = run_preflight(loaded.raw, write=True)
+    try:
+        loaded = load_config(config_path)
+        manifest = run_preflight(loaded.raw, write=True)
+    except (OSError, TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
@@ -155,7 +158,7 @@ def run_command(config_path: Path, production_approval: Path | None, threads: in
         with handle as stream:
             manifest = run_pipeline_from_config(config_path, production_approval_path=production_approval,
                                                 threads=threads, trace=RunTrace(stream) if stream else None)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, TypeError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
@@ -629,6 +632,115 @@ def validate_scrna_command(
             nichenet_resource=nichenet_resource,
         )
     except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+
+@main.command("validate-scrna-pseudobulk-de")
+@click.option("--output-dir", type=click.Path(path_type=Path), required=True)
+@click.option("--sce-rda", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None)
+@click.option("--counts", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None)
+@click.option("--design", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None)
+@click.option("--rscript", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None)
+@click.option("--sce-object", default=None)
+@click.option("--assay", default="counts", show_default=True)
+@click.option("--donor-column", default="ind", show_default=True)
+@click.option("--condition-column", default="stim", show_default=True)
+@click.option("--cell-type-column", default="cell", show_default=True)
+@click.option("--cell-type", required=True)
+@click.option("--control", required=True)
+@click.option("--case", "case_", required=True)
+@click.option("--multiplet-column", default=None)
+@click.option("--multiplet-keep", default=None)
+@click.option("--min-cells", type=int, default=1, show_default=True)
+@click.option("--min-pairs", type=int, default=4, show_default=True)
+@click.option("--analysis-level", type=click.Choice(["demo_result", "smoke_backend", "validated_backend"]), default="validated_backend", show_default=True)
+@click.option("--robust/--no-robust", default=True, show_default=True)
+def validate_scrna_pseudobulk_de_command(
+    output_dir: Path,
+    sce_rda: Path | None,
+    counts: Path | None,
+    design: Path | None,
+    rscript: Path | None,
+    sce_object: str | None,
+    assay: str,
+    donor_column: str,
+    condition_column: str,
+    cell_type_column: str,
+    cell_type: str,
+    control: str,
+    case_: str,
+    multiplet_column: str | None,
+    multiplet_keep: str | None,
+    min_cells: int,
+    min_pairs: int,
+    analysis_level: str,
+    robust: bool,
+) -> None:
+    """Run paired edgeR pseudobulk DE from SCE or preaggregated pseudobulk inputs."""
+    from ultimate.scrna_pseudobulk_de import run_scrna_pseudobulk_de
+
+    try:
+        manifest = run_scrna_pseudobulk_de(
+            output_dir=output_dir,
+            sce_rda=sce_rda,
+            counts=counts,
+            design=design,
+            rscript=rscript,
+            sce_object=sce_object,
+            assay=assay,
+            donor_column=donor_column,
+            condition_column=condition_column,
+            cell_type_column=cell_type_column,
+            cell_type=cell_type,
+            control=control,
+            case=case_,
+            multiplet_column=multiplet_column,
+            multiplet_keep=multiplet_keep,
+            min_cells=min_cells,
+            min_pairs=min_pairs,
+            analysis_level=analysis_level,
+            robust=robust,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+
+@main.command("annotate-scrna-celltypist")
+@click.option("--input-h5ad", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--output-dir", type=click.Path(path_type=Path), required=True)
+@click.option("--model", "model_path", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--analysis-level", type=click.Choice(["demo_result", "smoke_backend", "validated_backend", "production_backend"]), default="validated_backend", show_default=True)
+@click.option("--cluster-key", default="cluster", show_default=True)
+@click.option("--embedding-h5ad", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None, help="Optional h5ad with UMAP/cluster metadata aligned by cell id.")
+@click.option("--majority-voting/--no-majority-voting", default=True, show_default=True)
+@click.option("--uncertainty-threshold", type=float, default=0.5, show_default=True, help="Exploratory max-probability threshold used only to flag uncertain cells.")
+def annotate_scrna_celltypist_command(
+    input_h5ad: Path,
+    output_dir: Path,
+    model_path: Path,
+    analysis_level: str,
+    cluster_key: str,
+    embedding_h5ad: Path | None,
+    majority_voting: bool,
+    uncertainty_threshold: float,
+) -> None:
+    """Run CellTypist annotation on an existing full-gene h5ad without rerunning the scRNA MVP pipeline."""
+    from ultimate.scrna_smoke import run_celltypist_annotation
+
+    try:
+        manifest = run_celltypist_annotation(
+            input_h5ad=input_h5ad,
+            output_dir=output_dir,
+            model_path=model_path,
+            analysis_level=analysis_level,
+            cluster_key=cluster_key,
+            embedding_h5ad=embedding_h5ad,
+            majority_voting=majority_voting,
+            uncertainty_threshold=uncertainty_threshold,
+        )
+    except (OSError, TypeError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 

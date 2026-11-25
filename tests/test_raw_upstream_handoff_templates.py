@@ -16,11 +16,12 @@ def test_nfcore_rnaseq_handoff_is_import_ready_but_not_executed() -> None:
     params = yaml.safe_load((handoff_dir / "params.yaml").read_text(encoding="utf-8"))
     assert params["input"].endswith("nfcore_rnaseq_samplesheet.csv")
     assert params["aligner"] == "star_salmon"
-    assert params["outdir"].startswith("/shared/shen/2026/ultimate/jobs/<job_id>/runs/")
+    assert params["outdir"] == "jobs/<job_id>/runs/nfcore_%s" % params["outdir"].split("nfcore_")[-1]
+    assert params["outdir"].startswith("jobs/<job_id>/runs/nfcore_")
 
     nextflow_config = (handoff_dir / "nextflow.config").read_text(encoding="utf-8")
     assert "executor = 'slurm'" in nextflow_config
-    assert "cacheDir = '/shared/shen/2026/ultimate/containers/apptainer'" in nextflow_config
+    assert "cacheDir = 'containers/apptainer'" in nextflow_config
     assert "pipeline_info/dag.html" in nextflow_config
     assert "/share/home" not in nextflow_config
 
@@ -54,11 +55,12 @@ def test_nfcore_scrnaseq_handoff_is_import_ready_but_not_executed() -> None:
     assert params["input"].endswith("nfcore_scrnaseq_samplesheet.csv")
     assert params["aligner"] == "star"
     assert params["protocol"] == "10XV3"
-    assert params["outdir"].startswith("/shared/shen/2026/ultimate/jobs/<job_id>/runs/")
+    assert params["outdir"] == "jobs/<job_id>/runs/nfcore_%s" % params["outdir"].split("nfcore_")[-1]
+    assert params["outdir"].startswith("jobs/<job_id>/runs/nfcore_")
 
     nextflow_config = (handoff_dir / "nextflow.config").read_text(encoding="utf-8")
     assert "executor = 'slurm'" in nextflow_config
-    assert "cacheDir = '/shared/shen/2026/ultimate/containers/apptainer'" in nextflow_config
+    assert "cacheDir = 'containers/apptainer'" in nextflow_config
     assert "pipeline_info/dag.html" in nextflow_config
     assert "/share/home" not in nextflow_config
 
@@ -154,14 +156,20 @@ def test_dev_entrypoint_check_script_has_local_and_remote_modes() -> None:
 
     assert "set -euo pipefail" in text
     assert "--mode local|remote" in text
-    assert "hpc-run" in text
+    # Remote checks go through an SSH client that sites can override, not a
+    # cluster-specific submission wrapper.
+    assert 'ssh_cmd="${ULTIMATE_SSH:-ssh}"' in text
+    assert "hpc-run" not in text
     assert "pytest -q \\" in text
     assert "tests/test_cli.py::test_cli_prepare_intake" in text
     assert "pip install -e ." in text
-    assert '"$ultimate_bin" --help' in text
+    assert '"$ULTIMATE_BIN" --help' in text
     assert "handoff-check" in text
     assert "prepare-intake" in text
     assert "PYTHONPATH=" not in text
+    # Environment prefixes must be resolved from the runtime root, not <root>/.conda.
+    assert 'ENV_ROOT="${ULTIMATE_ENV_ROOT:' in text
+    assert "ultimate_runtime/envs" in text
 
 
 def _csv_header(path: Path) -> list[str]:

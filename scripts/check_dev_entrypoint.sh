@@ -10,7 +10,8 @@ usage() {
 usage: scripts/check_dev_entrypoint.sh [--mode local|remote] [--root PATH] [--python PATH]
 
 Checks the Ultimate development entrypoint without requiring PYTHONPATH.
-Remote mode uses hpc-run and performs only lightweight checks on the shared root.
+Remote mode runs the same lightweight checks on the shared root through SSH
+(override the client with ULTIMATE_SSH) instead of a site-specific wrapper.
 USAGE
 }
 
@@ -54,6 +55,10 @@ if [[ -z "$ROOT" ]]; then
     ROOT="${ULTIMATE_ROOT:-$default_local_root}"
   fi
 fi
+
+# Managed environments live outside the code root on shared deployments, so a
+# site points at them explicitly instead of relying on <root>/.conda/envs.
+ENV_ROOT="${ULTIMATE_ENV_ROOT:-$(dirname "$ROOT")/ultimate_runtime/envs}"
 
 run_local_checks() {
   local root="$1"
@@ -104,61 +109,58 @@ PY
 run_remote_checks() {
   local root="$1"
   local python_bin="$2"
-  if ! command -v hpc-run >/dev/null 2>&1; then
-    if [[ -z "$python_bin" ]]; then
-      if [[ -x "$root/.conda/envs/ultimate-core/bin/python" ]]; then
-        python_bin="$root/.conda/envs/ultimate-core/bin/python"
-      else
-        python_bin="$(command -v python3)"
-      fi
+  local ssh_cmd="${ULTIMATE_SSH:-ssh}"
+  if [[ -z "$python_bin" ]]; then
+    if [[ -x "$ENV_ROOT/ultimate-core/bin/python" ]]; then
+      python_bin="$ENV_ROOT/ultimate-core/bin/python"
+    else
+      python_bin="$(command -v python3)"
     fi
-    run_local_checks "$root" "$python_bin"
-    return 0
   fi
-  local remote_python_setup
-  if [[ -n "$python_bin" ]]; then
-    remote_python_setup="PYTHON_BIN='$python_bin'"
-  else
-    remote_python_setup='
-if [[ -x "$ROOT/.conda/envs/ultimate-core/bin/python" ]]; then
-  PYTHON_BIN="$ROOT/.conda/envs/ultimate-core/bin/python"
-else
-  PYTHON_BIN="$(command -v python3)"
-fi'
+  if ! command -v "${ssh_cmd%% *}" >/dev/null 2>&1; then
+    echo "--mode remote requires an SSH client; set ULTIMATE_SSH or use --mode local" >&2
+    exit 2
   fi
-
-  hpc-run "set -euo pipefail
-ROOT='$root'
-$remote_python_setup
-TMP_DIR=\"\$(mktemp -d)\"
-trap 'rm -rf \"\$TMP_DIR\"' EXIT
-cd \"\$ROOT\"
-echo \"[ultimate-dev-entrypoint] root=\$ROOT\"
-echo \"[ultimate-dev-entrypoint] python=\$PYTHON_BIN\"
-\"\$PYTHON_BIN\" -m pytest -q \\
-  tests/test_cli.py::test_cli_prepare_intake \\
-  tests/test_analysis_levels.py \\
-  tests/test_packaging_stability.py \\
+  # shellcheck disable=SC2086
+  $ssh_cmd bash -s -- "$root" "$python_bin" "$ENV_ROOT" <<'REMOTE'
+set -euo pipefail
+ROOT="$1"
+PYTHON_BIN="$2"
+ENV_ROOT="$3"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+cd "$ROOT"
+echo "[ultimate-dev-entrypoint] root=$ROOT"
+echo "[ultimate-dev-entrypoint] python=$PYTHON_BIN"
+"$PYTHON_BIN" -m pytest -q \
+  tests/test_cli.py::test_cli_prepare_intake \
+  tests/test_analysis_levels.py \
+  tests/test_packaging_stability.py \
   tests/test_handoff_check.py
-\"\$PYTHON_BIN\" -m pip install -e .
-\"\$ROOT/.conda/envs/ultimate-core/bin/ultimate\" --help >/dev/null
-\"\$ROOT/.conda/envs/ultimate-core/bin/ultimate\" handoff-check --root \"\$ROOT\" --output-dir \"\$TMP_DIR/handoff_check\" >/dev/null
-\"\$ROOT/.conda/envs/ultimate-core/bin/ultimate\" prepare-intake --root \"\$TMP_DIR/root\" --output-dir \"\$TMP_DIR/intake\" --refresh-audit >/dev/null
-\"\$PYTHON_BIN\" - \"\$TMP_DIR\" <<'PY'
+"$PYTHON_BIN" -m pip install -e .
+ULTIMATE_BIN="$ENV_ROOT/ultimate-core/bin/ultimate"
+if [[ ! -x "$ULTIMATE_BIN" ]]; then
+  ULTIMATE_BIN="$(command -v ultimate)"
+fi
+"$ULTIMATE_BIN" --help >/dev/null
+"$ULTIMATE_BIN" handoff-check --root "$ROOT" --output-dir "$TMP_DIR/handoff_check" >/dev/null
+"$ULTIMATE_BIN" prepare-intake --root "$TMP_DIR/root" --output-dir "$TMP_DIR/intake" --refresh-audit >/dev/null
+"$PYTHON_BIN" - "$TMP_DIR" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 tmp = Path(sys.argv[1])
-handoff = json.loads((tmp / 'handoff_check' / 'handoff_check_manifest.json').read_text(encoding='utf-8'))
-if handoff.get('status') != 'ready':
-    raise SystemExit(f'handoff-check not ready: {handoff}')
-intake = json.loads((tmp / 'intake' / 'intake_package_manifest.json').read_text(encoding='utf-8'))
-template_status = intake.get('template_status') if isinstance(intake.get('template_status'), dict) else {}
-if template_status.get('status') != 'ready':
-    raise SystemExit(f'prepare-intake template lookup not ready: {intake}')
-print('dev_entrypoint_status=ready')
-PY"
+handoff = json.loads((tmp / "handoff_check" / "handoff_check_manifest.json").read_text(encoding="utf-8"))
+if handoff.get("status") != "ready":
+    raise SystemExit(f"handoff-check not ready: {handoff}")
+intake = json.loads((tmp / "intake" / "intake_package_manifest.json").read_text(encoding="utf-8"))
+template_status = intake.get("template_status") if isinstance(intake.get("template_status"), dict) else {}
+if template_status.get("status") != "ready":
+    raise SystemExit(f"prepare-intake template lookup not ready: {intake}")
+print("dev_entrypoint_status=ready")
+PY
+REMOTE
 }
 
 if [[ "$MODE" == "remote" ]]; then

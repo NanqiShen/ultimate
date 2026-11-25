@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from ultimate.paths import project_root, resource_root
+from ultimate.paths import (
+    default_reference_root,
+    project_root,
+    resolve_path as resolve_path_unified,
+    resource_root,
+)
 
 from copy import deepcopy
 from dataclasses import dataclass
@@ -49,6 +54,7 @@ def normalize_config(config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
 
     normalized.setdefault("design", {})
     resources = normalized.setdefault("resources", {})
+    _seed_reference_defaults(resources)
     for group in ("human", "mouse"):
         organism_resources = resources.get(group)
         if isinstance(organism_resources, dict) and organism_resources.get("gtf"):
@@ -155,8 +161,27 @@ def normalize_config(config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
 
 
 def resolve_path(base_dir: Path, value: str | Path) -> Path:
-    candidate = Path(value).expanduser()
-    return candidate if candidate.is_absolute() else (base_dir / candidate).resolve()
+    return resolve_path_unified(base_dir, value)
+
+
+def _seed_reference_defaults(resources: dict[str, Any]) -> None:
+    """Fill reference locations from ``ULTIMATE_REFERENCE_ROOT`` when unset.
+
+    XieLab keeps genome and MSigDB references outside both the code root and
+    the runtime root, so an explicit reference root wins. Values already set in
+    the project file always take precedence and are resolved normally, which
+    keeps the ``@resources/`` and ``@project/`` shorthands working.
+    """
+    reference_root = default_reference_root()
+    if reference_root is None:
+        return
+    for species, assembly in (("human", "GRCh38.gtf"), ("mouse", "GRCm39.gtf")):
+        organism_resources = resources.setdefault(species, {})
+        if isinstance(organism_resources, dict) and not organism_resources.get("gtf"):
+            organism_resources["gtf"] = str(reference_root / "genomes" / species / assembly)
+    for key in ("msigdb", "cellchatdb"):
+        if not resources.get(key):
+            resources[key] = str(reference_root / key)
 
 
 def resolve_resource(base_dir: Path, value: str | Path, *, root: Path) -> Path:

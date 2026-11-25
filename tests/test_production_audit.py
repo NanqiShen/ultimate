@@ -212,7 +212,8 @@ def test_production_audit_validation_gap_plan_maps_missing_runs_to_slurm_command
 
     gap_plan = Path(manifest["validation_gap_plan"]).read_text(encoding="utf-8")
     row = next(line for line in gap_plan.splitlines() if line.startswith("scrna_mvp_10x_mtx\t"))
-    assert f"hpc-sbatch {root.resolve()}/slurm/scrna_mvp_validation.sbatch" in row
+    assert f"sbatch {root.resolve()}/slurm/scrna_mvp_validation.sbatch" in row
+    assert "hpc-sbatch" not in row
     assert "\tpresent\t" in row
     assert "manifest_status=missing" in row
     assert "验证命令" in row

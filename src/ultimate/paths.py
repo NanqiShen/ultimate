@@ -109,3 +109,12 @@ def default_platform_root() -> Path:
 def default_environment_root(project: Path | None = None) -> Path:
     """Backward-compatible alias for :func:`environment_root`."""
     return environment_root(project)
+
+
+def default_reference_root() -> Path | None:
+    """Optional shared reference tree (genomes, MSigDB, CellChatDB).
+
+    Returns ``None`` when unset so callers can keep their own defaults instead of
+    inventing a path that does not exist on this site.
+    """
+    return _env_path(ENV_REFERENCE_ROOT)

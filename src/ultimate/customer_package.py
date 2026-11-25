@@ -155,6 +155,8 @@ def _copy_artifact_tree(source_dir: Path, target_dir: Path, artifact_type: str) 
 def _sanitize_text(text: str) -> str:
     sanitized = text
     sanitized = re.sub(r"/shared/[^\s\"'<>]+", "[internal_path_redacted]", sanitized)
+    sanitized = re.sub(r"/dshare/[^\s\"'<>]+", "[internal_path_redacted]", sanitized)
+    sanitized = re.sub(r"/dhome/[^\s\"'<>]+", "[internal_path_redacted]", sanitized)
     sanitized = re.sub(r"/Users/[^\s\"'<>]+", "[internal_path_redacted]", sanitized)
     sanitized = re.sub(r"[A-Za-z0-9_./-]*/jobs/[^\s\"'<>]+", "[internal_job_path_redacted]", sanitized)
     sanitized = re.sub(r"\bSLURM_JOB_ID\b\s*[:=]?\s*\S*", "job id redacted", sanitized, flags=re.IGNORECASE)
@@ -165,6 +167,7 @@ def _sanitize_text(text: str) -> str:
     sanitized = sanitized.replace("production approval", "approval record redacted")
     sanitized = sanitized.replace("raw_links", "raw references redacted")
     sanitized = sanitized.replace(".conda", "environment redacted")
+    sanitized = sanitized.replace(".venv", "environment redacted")
     for token in CUSTOMER_FORBIDDEN_RAW_PATH_HINTS:
         sanitized = re.sub(re.escape(token), "input reference redacted", sanitized, flags=re.IGNORECASE)
     if not any(token in sanitized.lower() for token in ("warning", "警示", "interpretation", "解释边界", "not mechanism", "不是")):

@@ -114,6 +114,31 @@ def test_cli_run_requires_approval_for_production_backend(tmp_path: Path) -> Non
     assert "production_backend requires --production-approval" in result.output
 
 
+def test_cli_config_errors_are_reported_without_traceback(tmp_path: Path) -> None:
+    runner = CliRunner()
+    config_path = tmp_path / "bad_project.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "project:",
+                "  name: bad_project",
+                "  organism: unsupported_organism",
+                "modules: {}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    preflight = runner.invoke(main, ["preflight", "--config", str(config_path)])
+    run = runner.invoke(main, ["run", "--config", str(config_path)])
+
+    for result in (preflight, run):
+        assert result.exit_code != 0
+        assert "Unsupported organism" in result.output
+        assert "Traceback" not in result.output
+
+
 def test_cli_run_accepts_production_approval(tmp_path: Path) -> None:
     runner = CliRunner()
     project_dir = tmp_path / "cli_approved_order"

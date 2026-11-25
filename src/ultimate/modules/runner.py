@@ -17,7 +17,7 @@ import seaborn as sns
 from ultimate.analysis_levels import classify_analysis_level, require_real_evidence
 from ultimate.backend_registry import build_backend_plan, enrich_backend_plan_for_run, write_backend_plan_table
 from ultimate.constants import MODULE_SPECS
-from ultimate.bulk import is_bulk_module, run_bulk_module
+from ultimate.bulk import is_bulk_module, require_real_inputs_for_production, run_bulk_module
 from ultimate.cite_seq_backend import has_cite_seq_backend_config, run_cite_seq_backend
 from ultimate.genotype_demux_backend import has_genotype_demux_backend_config, run_genotype_demux_backend
 from ultimate.hto_demux_backend import has_hto_demux_backend_config, run_hto_demux_backend
@@ -98,6 +98,8 @@ def run_module(
 
     module_cfg = (config.get("modules") or {}).get(module_name) or {}
     validated_run_dir = _validated_run_dir(module_cfg)
+    if validated_run_dir is None:
+        require_real_inputs_for_production(config, module_name, module_cfg, module_cfg.get("input_matrix"))
     if validated_run_dir is not None:
         return _run_validated_run_backend(
             module_name=module_name,
