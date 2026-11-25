@@ -8,9 +8,9 @@
 set -euo pipefail
 
 CELLRANGER_ARC=/path/to/cellranger-arc
-REFERENCE=/shared/shen/2026/ultimate/references/10x/refdata-cellranger-arc-GRCh38-2024-A
-LIBRARIES=/shared/shen/2026/ultimate/jobs/<job_id>/config/cellranger_arc_libraries.csv
-OUT_ROOT=/shared/shen/2026/ultimate/jobs/<job_id>/runs/cellranger_arc
+REFERENCE=${ULTIMATE_ROOT}/references/10x/refdata-cellranger-arc-GRCh38-2024-A
+LIBRARIES=${ULTIMATE_ROOT}/jobs/<job_id>/config/cellranger_arc_libraries.csv
+OUT_ROOT=${ULTIMATE_ROOT}/jobs/<job_id>/runs/cellranger_arc
 
 mkdir -p "$OUT_ROOT"
 cd "$OUT_ROOT"

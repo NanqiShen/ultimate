@@ -25,7 +25,7 @@ from ultimate.preflight import run_preflight
 from ultimate.production_audit import run_production_audit
 from ultimate.raw_upstream import run_raw_upstream_evidence
 from ultimate.report import build_report
-from ultimate.runtime import RunTrace
+from ultimate.runtime import RunTrace, apply_thread_budget, thread_budget
 from ultimate.reproducibility import export_reproducible_package
 from ultimate.singlecell_audit import run_singlecell_audit
 from ultimate.triage import run_triage
@@ -113,9 +113,10 @@ def preflight_command(config_path: Path) -> None:
 @main.command("doctor")
 @click.option("--config", "config_path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
 @click.option("--threads", type=click.IntRange(min=1))
-def doctor_command(config_path: Path | None, threads: int | None) -> None:
+@click.option("--module", "module_name", default=None, help="Also check one module's Python/R dependencies and packaged assets.")
+def doctor_command(config_path: Path | None, threads: int | None, module_name: str | None) -> None:
     """Check the installation and configuration metadata without running analyses."""
-    report = inspect_environment(config_path, threads)
+    report = inspect_environment(config_path, threads, module_name)
     click.echo(json.dumps(report, indent=2, ensure_ascii=False))
     if report["status"] != "pass":
         raise click.exceptions.Exit(1)
@@ -593,6 +594,7 @@ def create_scrna_demo_inputs_command(output_dir: Path, n_cells: int, n_genes: in
 @click.option("--production-approval", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None, help="Approved JSON gate file required for production_backend.")
 @click.option("--celltypist-model", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None, help="Optional local CellTypist model. If omitted, CellTypist is skipped without downloading.")
 @click.option("--nichenet-resource", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None, help="Optional ligand-target TSV/CSV resource for NicheNet-style communication backend.")
+@click.option("--threads", type=click.IntRange(min=1), help="Requested thread count; capped by Slurm and CPU affinity.")
 def validate_scrna_command(
     input_path: Path,
     input_type: str,
@@ -606,6 +608,7 @@ def validate_scrna_command(
     production_approval: Path | None,
     celltypist_model: Path | None,
     nichenet_resource: Path | None,
+    threads: int | None,
 ) -> None:
     """Run the scRNA MVP validation path on h5ad, 10x H5, or 10x MTX input."""
     from ultimate.scrna_smoke import run_scrna_validation
@@ -617,22 +620,24 @@ def validate_scrna_command(
             input_path=input_path,
             output_dir=output_dir,
         )
-        manifest = run_scrna_validation(
-            input_path=input_path,
-            input_type=input_type,
-            output_dir=output_dir,
-            samplesheet=samplesheet,
-            max_cells=max_cells,
-            random_seed=random_seed,
-            analysis_level=analysis_level,
-            public_dataset=public_dataset,
-            dataset_label=dataset_label,
-            production_approval=approval,
-            celltypist_model=celltypist_model,
-            nichenet_resource=nichenet_resource,
-        )
+        with apply_thread_budget(thread_budget({}, threads)):
+            manifest = run_scrna_validation(
+                input_path=input_path,
+                input_type=input_type,
+                output_dir=output_dir,
+                samplesheet=samplesheet,
+                max_cells=max_cells,
+                random_seed=random_seed,
+                analysis_level=analysis_level,
+                public_dataset=public_dataset,
+                dataset_label=dataset_label,
+                production_approval=approval,
+                celltypist_model=celltypist_model,
+                nichenet_resource=nichenet_resource,
+            )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
+    manifest["thread_budget"] = thread_budget({}, threads).as_dict()
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
@@ -656,6 +661,7 @@ def validate_scrna_command(
 @click.option("--min-pairs", type=int, default=4, show_default=True)
 @click.option("--analysis-level", type=click.Choice(["demo_result", "smoke_backend", "validated_backend"]), default="validated_backend", show_default=True)
 @click.option("--robust/--no-robust", default=True, show_default=True)
+@click.option("--threads", type=click.IntRange(min=1), help="Requested thread count; capped by Slurm and CPU affinity.")
 def validate_scrna_pseudobulk_de_command(
     output_dir: Path,
     sce_rda: Path | None,
@@ -676,10 +682,12 @@ def validate_scrna_pseudobulk_de_command(
     min_pairs: int,
     analysis_level: str,
     robust: bool,
+    threads: int | None,
 ) -> None:
     """Run paired edgeR pseudobulk DE from SCE or preaggregated pseudobulk inputs."""
     from ultimate.scrna_pseudobulk_de import run_scrna_pseudobulk_de
 
+    budget = thread_budget({}, threads)
     try:
         manifest = run_scrna_pseudobulk_de(
             output_dir=output_dir,
@@ -704,6 +712,7 @@ def validate_scrna_pseudobulk_de_command(
         )
     except (OSError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
+    manifest["thread_budget"] = budget.as_dict()
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
@@ -716,6 +725,7 @@ def validate_scrna_pseudobulk_de_command(
 @click.option("--embedding-h5ad", type=click.Path(path_type=Path, exists=True, dir_okay=False), default=None, help="Optional h5ad with UMAP/cluster metadata aligned by cell id.")
 @click.option("--majority-voting/--no-majority-voting", default=True, show_default=True)
 @click.option("--uncertainty-threshold", type=float, default=0.5, show_default=True, help="Exploratory max-probability threshold used only to flag uncertain cells.")
+@click.option("--threads", type=click.IntRange(min=1), help="Requested thread count; capped by Slurm and CPU affinity.")
 def annotate_scrna_celltypist_command(
     input_h5ad: Path,
     output_dir: Path,
@@ -725,10 +735,12 @@ def annotate_scrna_celltypist_command(
     embedding_h5ad: Path | None,
     majority_voting: bool,
     uncertainty_threshold: float,
+    threads: int | None,
 ) -> None:
     """Run CellTypist annotation on an existing full-gene h5ad without rerunning the scRNA MVP pipeline."""
     from ultimate.scrna_smoke import run_celltypist_annotation
 
+    budget = thread_budget({}, threads)
     try:
         manifest = run_celltypist_annotation(
             input_h5ad=input_h5ad,
@@ -742,6 +754,7 @@ def annotate_scrna_celltypist_command(
         )
     except (OSError, TypeError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
+    manifest["thread_budget"] = budget.as_dict()
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 

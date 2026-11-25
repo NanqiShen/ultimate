@@ -101,6 +101,12 @@ ultimate = ["templates/*.j2"]
 "share/ultimate/templates/handoffs/tumor_sc" = ["templates/handoffs/tumor_sc/*"]
 "share/ultimate/templates/handoffs/vdj" = ["templates/handoffs/vdj/*"]
 "share/ultimate/templates/handoffs/wgcna" = ["templates/handoffs/wgcna/*"]
+# Files needed at runtime by non-checkout (wheel) installs: R backends, the
+# default config used by init-project, the job Slurm wrapper, and env defs.
+"share/ultimate/scripts/R" = ["scripts/R/*.R"]
+"share/ultimate/config" = ["config/default.yaml"]
+"share/ultimate/slurm" = ["slurm/ultimate_run.sbatch", "slurm/xielab_setup_runtime_envs.sbatch"]
+"share/ultimate/envs" = ["envs/xielab.core.yml", "envs/xielab.scrna.py.yml", "envs/xielab.bio.r.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

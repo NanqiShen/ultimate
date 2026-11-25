@@ -18,6 +18,7 @@ import seaborn as sns
 from ultimate.analysis_levels import classify_analysis_level
 from ultimate.backend_registry import build_backend_plan, enrich_backend_plan_for_run, write_backend_plan_table
 from ultimate.constants import MODULE_SPECS
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
 from ultimate.modules.common import (
     handoff_plan,
     known_limitations,
@@ -542,7 +543,8 @@ def _run_dsb_backend(
         reason = "missing_empty_adt_matrix"
     elif not empty_matrix.exists():
         reason = f"missing_empty_adt_matrix:{empty_matrix}"
-    rscript = shutil.which("Rscript")
+    rscript_path = resolve_rscript("cite_seq")
+    rscript = str(rscript_path) if rscript_path is not None else ""
     if not reason and not rscript:
         reason = "dependency_missing:Rscript"
     if not reason and not _r_package_available(rscript, "dsb"):
@@ -577,7 +579,7 @@ def _run_dsb_backend(
         controls_value = controls
     else:
         controls_value = ",".join(map(str, controls))
-    script = Path(__file__).resolve().parents[2] / "scripts" / "R" / "cite_seq_dsb_backend.R"
+    script = resolve_packaged_asset("scripts", "R", "cite_seq_dsb_backend.R")
     command = [
         rscript,
         str(script),

@@ -10,9 +10,9 @@ Cell Ranger 是授权/用户自带工具，Ultimate 只做路径检测和命令�
 set -euo pipefail
 
 CELLRANGER=/path/to/cellranger
-TRANSCRIPTOME=/shared/shen/2026/ultimate/references/10x/refdata-gex-GRCh38-2024-A
-FASTQS=/shared/shen/2026/ultimate/jobs/<job_id>/raw_links/fastqs
-OUT_ROOT=/shared/shen/2026/ultimate/jobs/<job_id>/runs/cellranger_count
+TRANSCRIPTOME=${ULTIMATE_ROOT}/references/10x/refdata-gex-GRCh38-2024-A
+FASTQS=${ULTIMATE_ROOT}/jobs/<job_id>/raw_links/fastqs
+OUT_ROOT=${ULTIMATE_ROOT}/jobs/<job_id>/runs/cellranger_count
 
 mkdir -p "$OUT_ROOT"
 cd "$OUT_ROOT"

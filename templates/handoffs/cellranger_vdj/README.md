@@ -8,9 +8,9 @@
 set -euo pipefail
 
 CELLRANGER=/path/to/cellranger
-REFERENCE=/shared/shen/2026/ultimate/references/10x/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0
-FASTQS=/shared/shen/2026/ultimate/jobs/<job_id>/raw_links/fastqs
-OUT_ROOT=/shared/shen/2026/ultimate/jobs/<job_id>/runs/cellranger_vdj
+REFERENCE=${ULTIMATE_ROOT}/references/10x/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0
+FASTQS=${ULTIMATE_ROOT}/jobs/<job_id>/raw_links/fastqs
+OUT_ROOT=${ULTIMATE_ROOT}/jobs/<job_id>/runs/cellranger_vdj
 
 mkdir -p "$OUT_ROOT"
 cd "$OUT_ROOT"

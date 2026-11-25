@@ -247,7 +247,13 @@ def test_ultimate_run_slurm_wrapper_uses_portable_conda_discovery() -> None:
     assert 'CONDA_SH="${CONDA_SH:-}"' in text
     assert "for candidate in" in text
     assert 'export PATH="$ENV_PREFIX/bin:$PATH"' in text
-    assert "Unable to locate conda.sh or Python env" in text
+    # XieLab ships only micromamba, so discovery is layered rather than conda-only.
+    assert 'RUNTIME_ROOT="${ULTIMATE_RUNTIME_ROOT:' in text
+    assert 'discover_env_prefix()' in text
+    assert '"/ultimate_runtime"' in text or "/ultimate_runtime" in text
+    assert "micromamba" in text
+    assert "No usable Ultimate environment found" in text
+    assert "xielab_setup_runtime_envs.sbatch" in text
     assert "/share/home/nshen" not in text
 
 

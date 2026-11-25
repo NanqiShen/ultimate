@@ -9,13 +9,13 @@
 ```bash
 set -euo pipefail
 
-export NXF_HOME=/shared/shen/2026/ultimate/.nextflow
-export NXF_WORK=/shared/shen/2026/ultimate/jobs/<job_id>/work/nfcore_sopa
+export NXF_HOME=${ULTIMATE_ROOT}/.nextflow
+export NXF_WORK=${ULTIMATE_ROOT}/jobs/<job_id>/work/nfcore_sopa
 
 nextflow run nf-core/sopa \
   -profile apptainer,slurm \
-  -c /shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_sopa_nextflow.config \
-  -params-file /shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_sopa_params.yaml \
+  -c ${ULTIMATE_ROOT}/jobs/<job_id>/config/nfcore_sopa_nextflow.config \
+  -params-file ${ULTIMATE_ROOT}/jobs/<job_id>/config/nfcore_sopa_params.yaml \
   -work-dir "$NXF_WORK" \
   -resume
 ```

@@ -11,7 +11,7 @@
 - `nextflow.config`：按集群分区、容器缓存、资源上限调整。
 - `command_plan.sh`：只打印待复核命令，不代表 Ultimate 已执行 upstream。
 - `expected_matrix_import.yaml`：记录 nf-core 输出如何转成 Ultimate 下游 `rnaseq` import config。
-- 参考资源和容器缓存必须放在 `/shared/shen/2026/ultimate/` 或其子目录，不放 home。
+- 参考资源和容器缓存必须放在 `${ULTIMATE_ROOT}` 或其子目录，不放 home。
 - 运行前必须确认 strandedness/design metadata、参考基因组/注释、容器缓存和 Slurm 分区；不允许在 login node 跑重计算。
 
 ## Slurm/Nextflow 命令计划
@@ -20,13 +20,13 @@
 set -euo pipefail
 
 JOB_ID=<job_id>
-export NXF_HOME=/shared/shen/2026/ultimate/.nextflow
-export NXF_WORK=/shared/shen/2026/ultimate/jobs/${JOB_ID}/work/nfcore_rnaseq
+export NXF_HOME=${ULTIMATE_ROOT}/.nextflow
+export NXF_WORK=${ULTIMATE_ROOT}/jobs/${JOB_ID}/work/nfcore_rnaseq
 
 nextflow run nf-core/rnaseq \
   -profile apptainer,slurm \
-  -c /shared/shen/2026/ultimate/jobs/${JOB_ID}/config/nfcore_rnaseq_nextflow.config \
-  -params-file /shared/shen/2026/ultimate/jobs/${JOB_ID}/config/nfcore_rnaseq_params.yaml \
+  -c ${ULTIMATE_ROOT}/jobs/${JOB_ID}/config/nfcore_rnaseq_nextflow.config \
+  -params-file ${ULTIMATE_ROOT}/jobs/${JOB_ID}/config/nfcore_rnaseq_params.yaml \
   -work-dir "$NXF_WORK" \
   -resume
 ```

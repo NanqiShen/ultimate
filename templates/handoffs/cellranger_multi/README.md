@@ -8,8 +8,8 @@
 set -euo pipefail
 
 CELLRANGER=/path/to/cellranger
-MULTI_CONFIG=/shared/shen/2026/ultimate/jobs/<job_id>/config/cellranger_multi_config.csv
-OUT_ROOT=/shared/shen/2026/ultimate/jobs/<job_id>/runs/cellranger_multi
+MULTI_CONFIG=${ULTIMATE_ROOT}/jobs/<job_id>/config/cellranger_multi_config.csv
+OUT_ROOT=${ULTIMATE_ROOT}/jobs/<job_id>/runs/cellranger_multi
 
 mkdir -p "$OUT_ROOT"
 cd "$OUT_ROOT"

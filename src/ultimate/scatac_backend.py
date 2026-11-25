@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import re
-import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +19,7 @@ import seaborn as sns
 from ultimate.analysis_levels import classify_analysis_level
 from ultimate.backend_registry import build_backend_plan, enrich_backend_plan_for_run, write_backend_plan_table
 from ultimate.constants import MODULE_SPECS
+from ultimate.env_router import resolve_rscript
 from ultimate.modules.common import (
     handoff_plan,
     known_limitations,
@@ -1056,7 +1056,8 @@ def _run_formal_chromvar_backend(
     script_path: Path,
     object_path: Path,
 ) -> dict[str, Any]:
-    rscript = shutil.which("Rscript")
+    rscript_path = resolve_rscript("scatac")
+    rscript = str(rscript_path) if rscript_path is not None else ""
     if not rscript:
         _write_chromvar_versions(versions_path, "skipped", "missing_Rscript")
         return {"status": "skipped:missing_Rscript", "motif_deviation": pd.DataFrame()}

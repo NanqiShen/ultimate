@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
 
 
 BACKEND_ID = "scrna.pseudobulk.edger_paired"
@@ -51,13 +52,13 @@ def run_scrna_pseudobulk_de(
     for directory in (tables_dir, figures_dir, objects_dir, logs_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    rscript_found = shutil.which("Rscript")
-    if rscript is None and not rscript_found:
-        raise RuntimeError("Rscript was not found on PATH; provide --rscript.")
-    rscript_path = rscript or Path(rscript_found)
-    backend_script = Path(__file__).resolve().parents[2] / "scripts" / "R" / "scrna_paired_pseudobulk_edger.R"
-    if not backend_script.exists():
-        raise RuntimeError(f"Backend script is missing: {backend_script}")
+    rscript_path = rscript or resolve_rscript("scrna", {"rscript": None})
+    if rscript_path is None:
+        raise RuntimeError(
+            "No Rscript found for scrna.pseudobulk.edger_paired. Set --rscript, "
+            "ULTIMATE_RSCRIPT or ULTIMATE_R_ENV_SCRNA, or build the R environment."
+        )
+    backend_script = resolve_packaged_asset("scripts", "R", "scrna_paired_pseudobulk_edger.R")
 
     command = [
         str(rscript_path),

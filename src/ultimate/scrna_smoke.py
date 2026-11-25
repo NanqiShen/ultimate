@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from ultimate.analysis_levels import classify_analysis_level
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
 from ultimate.plot_style import apply_clinical_journal_style, save_figure
 
 
@@ -1599,7 +1600,7 @@ def _run_cellchat_backend(
         "cellchat_run_script": str(script_path),
         "cellchat_network": str(figure_path),
     }
-    rscript = shutil.which("Rscript")
+    rscript = _rscript_str("scrna")
     if not rscript:
         reason = "dependency_missing:Rscript"
         _write_cellchat_skip_outputs(interactions_path, pathway_path, network_path, status_path, manifest_path, figure_path, backend_id, analysis_level, reason, artifacts)
@@ -1716,7 +1717,7 @@ def _run_pseudobulk_de_backend(*, tables: Path, analysis_level: str) -> tuple[di
     design_path = tables / "pseudobulk_design.tsv"
     reason = _pseudobulk_design_blocker(design_path)
     if not reason:
-        rscript = shutil.which("Rscript")
+        rscript = _rscript_str("scrna")
         if not rscript:
             reason = "dependency_missing:Rscript"
         else:
@@ -1724,7 +1725,7 @@ def _run_pseudobulk_de_backend(*, tables: Path, analysis_level: str) -> tuple[di
             if not (packages.get("DESeq2") or packages.get("edgeR")):
                 reason = "dependency_missing:DESeq2_or_edgeR"
             else:
-                script = Path(__file__).resolve().parents[2] / "scripts" / "R" / "scrna_pseudobulk_de_backend.R"
+                script = resolve_packaged_asset("scripts", "R", "scrna_pseudobulk_de_backend.R")
                 command = [
                     rscript,
                     str(script),
@@ -2005,6 +2006,12 @@ def _pseudobulk_design_blocker(design_path: Path) -> str:
     if valid_clusters < 1:
         return ";".join(blockers)
     return ""
+
+
+def _rscript_str(module_name: str) -> str:
+    """Rscript for this module, routed through the shared environment resolver."""
+    resolved = resolve_rscript(module_name)
+    return str(resolved) if resolved is not None else ""
 
 
 def _available_r_packages(rscript: str, packages: tuple[str, ...]) -> dict[str, bool]:
