@@ -4,6 +4,7 @@ import importlib.util
 import json
 import math
 import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ import pandas as pd
 import seaborn as sns
 
 from ultimate.analysis_levels import classify_analysis_level
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
 from ultimate.backend_registry import build_backend_plan, enrich_backend_plan_for_run, write_backend_plan_table
 from ultimate.constants import MODULE_SPECS
 from ultimate.modules.common import (
@@ -33,6 +35,7 @@ from ultimate.modules.common import (
 )
 from ultimate.plot_style import apply_clinical_journal_style, continuous_cmap, save_figure
 from ultimate.rnaseq_de_backend import run_rnaseq_de_backend, rnaseq_de_backend_requested
+from ultimate.survival_backend import run_survival_analysis
 
 
 BULK_MODULES = {
@@ -105,7 +108,7 @@ def run_bulk_module(
     artifacts["tables"].update(_write_common_tables(module_name, matrix, stats, samples, inputs, tables_dir))
     artifacts["tables"].update(_write_module_tables(module_name, matrix, stats, samples, inputs, tables_dir, module_cfg))
     artifacts["figures"].update(_write_common_figures(module_name, matrix, stats, samples, figures_dir, design))
-    artifacts["figures"].update(_write_module_figures(module_name, matrix, stats, samples, inputs, figures_dir, module_cfg))
+    artifacts["figures"].update(_write_module_figures(module_name, matrix, stats, samples, inputs, figures_dir, module_cfg, inputs.clinical))
     artifacts["objects"].update(_write_bulk_objects(module_name, matrix, stats, inputs, objects_dir))
     backend_execution: list[dict[str, Any]] = []
     rnaseq_de_result: dict[str, Any] | None = None
@@ -469,23 +472,22 @@ def _differential_stats(matrix: pd.DataFrame, samples: pd.DataFrame, design: dic
         midpoint = max(1, matrix.shape[1] // 2)
         control_cols = list(matrix.columns[:midpoint])
         case_cols = list(matrix.columns[midpoint:])
-    control_mean = matrix[control_cols].mean(axis=1)
-    case_mean = matrix[case_cols].mean(axis=1)
-    effect = case_mean - control_mean
-    pooled = matrix.std(axis=1).replace(0, np.nan).fillna(1.0)
-    z_score = effect / pooled
-    pvalue = pd.Series([_normal_sf(abs(value)) * 2 for value in z_score], index=matrix.index)
-    padj = _benjamini_hochberg(pvalue)
+    # Reuse the Welch t implementation so the main module flow and the
+    # two-group backends agree on p-values; keep the legacy column names for
+    # downstream compatibility.
+    welch = _two_group_stats(matrix, control_cols, case_cols)
     return pd.DataFrame(
         {
-            "feature_id": matrix.index.astype(str),
-            "control_mean": control_mean.to_numpy(),
-            "case_mean": case_mean.to_numpy(),
-            "effect_size": effect.to_numpy(),
-            "log2FC": effect.to_numpy(),
-            "z_score": z_score.to_numpy(),
-            "pvalue": pvalue.to_numpy(),
-            "padj": padj.to_numpy(),
+            "feature_id": welch["feature_id"].to_numpy(),
+            "control_mean": welch["control_mean"].to_numpy(),
+            "case_mean": welch["case_mean"].to_numpy(),
+            "effect_size": welch["log2FC"].to_numpy(),
+            "log2FC": welch["log2FC"].to_numpy(),
+            "z_score": welch["statistic"].to_numpy(),
+            "df": welch["df"].to_numpy(),
+            "pvalue": welch["pvalue"].to_numpy(),
+            "padj": welch["padj"].to_numpy(),
+            "test_method": welch["test_method"].to_numpy(),
         }
     ).sort_values(["padj", "pvalue"])
 
@@ -672,6 +674,81 @@ def _proteomics_tables(matrix: pd.DataFrame, stats: pd.DataFrame, tables_dir: Pa
     }
 
 
+def _matrix_to_tsv(matrix: pd.DataFrame, path: Path) -> None:
+    frame = matrix.copy()
+    frame.index = frame.index.astype(str)
+    frame.columns = frame.columns.astype(str)
+    frame.insert(0, "feature_id", frame.index)
+    frame.to_csv(path, sep="\t", index=False)
+
+
+def _r_engine_available(module_name: str, script: str, required_package: str) -> tuple[str, str]:
+    """Return ``(status, detail)`` for an optional R analysis backend.
+
+    ``status`` is ``ready`` only when both a usable Rscript and the required R
+    package exist. Anything else is an explicit ``skipped`` reason; callers must
+    never claim a limma/WGCNA result without the actual engine.
+    """
+    rscript = resolve_rscript(module_name)
+    if rscript is None:
+        return "skipped", "dependency_missing:Rscript"
+    try:
+        script_path = resolve_packaged_asset("scripts", "R", script)
+    except FileNotFoundError:
+        return "skipped", f"missing_backend_script:{script}"
+    probe = subprocess.run(
+        [str(rscript), "-e", f'if(!requireNamespace("{required_package}", quietly=TRUE)) quit(status=2)'],
+        check=False, capture_output=True, text=True, timeout=120,
+    )
+    if probe.returncode != 0:
+        return "skipped", f"dependency_missing:{required_package}"
+    return "ready", str(script_path)
+
+
+def _try_r_limma(
+    *,
+    matrix: pd.DataFrame,
+    samples: pd.DataFrame,
+    design: dict[str, Any],
+    script: str,
+    module_name: str,
+    tables_dir: Path,
+    objects_dir: Path,
+    result_path: Path,
+    object_path: Path,
+) -> tuple[bool, str, pd.DataFrame | None]:
+    """Run a real R limma backend when its engine is installed.
+
+    Returns ``(used_r, detail, result)``. When R/limma is missing this returns
+    ``(False, reason, None)`` and the caller records an honest python fallback.
+    """
+    status, detail = _r_engine_available(module_name, script, "limma")
+    if status != "ready":
+        return False, detail, None
+    matrix_tsv = tables_dir / f"{module_name}_limma_input_matrix.tsv"
+    samples_tsv = tables_dir / f"{module_name}_limma_input_samples.tsv"
+    _matrix_to_tsv(matrix, matrix_tsv)
+    samples.to_csv(samples_tsv, sep="\t", index=False)
+    command = [
+        str(resolve_rscript(module_name)), str(detail),
+        "--matrix", str(matrix_tsv), "--samples", str(samples_tsv),
+        "--output", str(result_path), "--object", str(object_path),
+        "--condition-column", str(design.get("condition_column", "condition")),
+        "--control", str(design.get("control", "control")),
+        "--case", str(design.get("case", "treated")),
+    ]
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=900)
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        if payload.get("status") != "ready":
+            return False, str(payload.get("reason", "r_backend_not_ready")), None
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, IndexError) as exc:
+        return False, f"r_limma_failed:{type(exc).__name__}", None
+    if not result_path.exists():
+        return False, "r_limma_no_output", None
+    return True, "R_limma", pd.read_csv(result_path, sep="\t")
+
+
 def _run_proteomics_limma_backend(
     *,
     matrix: pd.DataFrame,
@@ -690,11 +767,22 @@ def _run_proteomics_limma_backend(
     warning = "蛋白差异是 abundance table 统计结果；相关网络/PPI 仍为 handoff，不能写成真实物理互作或机制证明。"
     if group["status"] != "ready":
         return _write_bulk_backend_skip(paths, backend_id, analysis_fields, group["reason"], warning)
-    result = _two_group_stats(matrix, group["control_cols"], group["case_cols"]).rename(
-        columns={"feature_id": "protein_id", "log2FC": "log2_abundance_delta"}
+    used_r, r_detail, r_result = _try_r_limma(
+        matrix=matrix, samples=samples, design=design,
+        script="proteomics_limma_backend.R", module_name="proteomics",
+        tables_dir=tables_dir, objects_dir=objects_dir,
+        result_path=paths["result"], object_path=paths["object"],
     )
+    if used_r and r_result is not None and "protein_id" in r_result.columns:
+        result = r_result
+        method_label = "limma::lmFit+eBayes (R)"
+    else:
+        result = _two_group_stats(matrix, group["control_cols"], group["case_cols"]).rename(
+            columns={"feature_id": "protein_id", "log2FC": "log2_abundance_delta"}
+        )
+        method_label = f"welch_t_python_fallback_not_limma_not_for_production:{r_detail}"
     result.insert(0, "backend_id", backend_id)
-    result["method"] = "limma_style_moderated_statistics_python_fallback"
+    result["method"] = method_label
     result["method_boundary"] = warning
     result["control_group"] = group["control"]
     result["case_group"] = group["case"]
@@ -759,13 +847,24 @@ def _run_methylation_dmp_backend(
         skipped = _write_bulk_backend_skip(paths, backend_id, analysis_fields, group["reason"], warning)
         skipped["artifacts"]["tables"]["methylation_mvalue_summary"] = str(mvalue_summary)
         return skipped
-    result = _two_group_stats(mvalues, group["control_cols"], group["case_cols"]).rename(
-        columns={"feature_id": "region_id", "log2FC": "m_value_delta"}
+    used_r, r_detail, r_result = _try_r_limma(
+        matrix=beta, samples=samples, design=design,
+        script="methylation_dmp_limma.R", module_name="methylation",
+        tables_dir=tables_dir, objects_dir=objects_dir,
+        result_path=paths["result"], object_path=paths["object"],
     )
-    beta_delta = beta[group["case_cols"]].mean(axis=1) - beta[group["control_cols"]].mean(axis=1)
-    result["beta_delta"] = result["region_id"].map(beta_delta.to_dict()).astype(float)
+    if used_r and r_result is not None and "region_id" in r_result.columns:
+        result = r_result
+        method_label = "limma::Mvalue_lmFit+eBayes (R)"
+    else:
+        result = _two_group_stats(mvalues, group["control_cols"], group["case_cols"]).rename(
+            columns={"feature_id": "region_id", "log2FC": "m_value_delta"}
+        )
+        beta_delta = beta[group["case_cols"]].mean(axis=1) - beta[group["control_cols"]].mean(axis=1)
+        result["beta_delta"] = result["region_id"].map(beta_delta.to_dict()).astype(float)
+        method_label = f"welch_t_python_fallback_not_limma_not_for_production:{r_detail}"
     result.insert(0, "backend_id", backend_id)
-    result["method"] = "limma_style_mvalue_dmp_python_fallback"
+    result["method"] = method_label
     result["method_boundary"] = warning
     result["annotation_status"] = "annotation_handoff_required_for_genomic_context"
     result["control_group"] = group["control"]
@@ -808,7 +907,7 @@ def _backend_paths(tables_dir: Path, figures_dir: Path, objects_dir: Path, *, pr
         "versions": tables_dir / f"{prefix}_backend_versions.tsv",
         "volcano": figures_dir / f"{prefix}_volcano.png",
         "heatmap": figures_dir / f"{prefix}_heatmap.png",
-        "object": objects_dir / f"{prefix}_backend.rds",
+        "object": objects_dir / f"{prefix}_backend.json",
     }
 
 
@@ -836,16 +935,52 @@ def _validated_two_group_columns(matrix: pd.DataFrame, samples: pd.DataFrame, de
 
 
 def _two_group_stats(matrix: pd.DataFrame, control_cols: list[str], case_cols: list[str]) -> pd.DataFrame:
+    """Welch two-sample t-test with per-feature df and BH FDR.
+
+    Small cohorts with unequal variance are where a normal z approximation
+    inflates significance. We use scipy's Welch t when available and record the
+    test explicitly. If scipy is absent we fall back to the legacy normal
+    approximation and mark every row
+    ``normal_approx_fallback_not_for_production`` so a fallback can never be
+    mistaken for a validated result.
+    """
     control = matrix[control_cols].apply(pd.to_numeric, errors="coerce")
     case = matrix[case_cols].apply(pd.to_numeric, errors="coerce")
     control_mean = control.mean(axis=1)
     case_mean = case.mean(axis=1)
     effect = case_mean - control_mean
-    control_var = control.var(axis=1, ddof=1).replace(0, np.nan)
-    case_var = case.var(axis=1, ddof=1).replace(0, np.nan)
-    stderr = np.sqrt((control_var / max(1, len(control_cols))) + (case_var / max(1, len(case_cols)))).replace(0, np.nan).fillna(matrix.std(axis=1).replace(0, np.nan).fillna(1.0))
-    z_score = effect / stderr
-    pvalue = pd.Series([_normal_sf(abs(value)) * 2 for value in z_score.fillna(0.0)], index=matrix.index)
+    control_var = control.var(axis=1, ddof=1).fillna(0.0)
+    case_var = case.var(axis=1, ddof=1).fillna(0.0)
+    n_ctrl, n_case = max(1, len(control_cols)), max(1, len(case_cols))
+    se2 = (control_var / n_ctrl) + (case_var / n_case)
+
+    scipy_available = importlib.util.find_spec("scipy") is not None
+    if scipy_available:
+        from scipy import stats as scipy_stats
+
+        # scipy can return NaN for constant features; replace those with a
+        # p-value of 1 so BH FDR stays well defined.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            tstat, pvals = scipy_stats.ttest_ind(
+                case.to_numpy(dtype=float), control.to_numpy(dtype=float),
+                axis=1, equal_var=False,
+            )
+        tstat = pd.Series(tstat, index=matrix.index).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        pvalue = pd.Series(pvals, index=matrix.index).fillna(1.0).clip(0, 1)
+        # Welch-Satterthwaite degrees of freedom, recorded explicitly.
+        df_values = (se2 ** 2) / (
+            ((control_var / n_ctrl) ** 2 / max(1, n_ctrl - 1)) +
+            ((case_var / n_case) ** 2 / max(1, n_case - 1))
+        ).replace(0, np.nan)
+        df_values = df_values.replace([np.inf, -np.inf], np.nan).fillna(max(1, n_ctrl + n_case - 2))
+        test_method = "welch_t_scipy"
+    else:
+        stderr = np.sqrt(se2).replace(0, np.nan).fillna(matrix.std(axis=1).replace(0, np.nan).fillna(1.0))
+        tstat = (effect / stderr).fillna(0.0)
+        pvalue = pd.Series([_normal_sf(abs(value)) * 2 for value in tstat], index=matrix.index)
+        df_values = pd.Series(max(1, n_ctrl + n_case - 2), index=matrix.index, dtype=float)
+        test_method = "normal_approx_fallback_not_for_production"
+
     padj = _benjamini_hochberg(pvalue)
     return pd.DataFrame(
         {
@@ -853,9 +988,11 @@ def _two_group_stats(matrix: pd.DataFrame, control_cols: list[str], case_cols: l
             "control_mean": control_mean.to_numpy(),
             "case_mean": case_mean.to_numpy(),
             "log2FC": effect.to_numpy(),
-            "statistic": z_score.to_numpy(),
+            "statistic": tstat.to_numpy(),
+            "df": df_values.to_numpy(),
             "pvalue": pvalue.to_numpy(),
             "padj": padj.to_numpy(),
+            "test_method": test_method,
         }
     ).sort_values(["padj", "pvalue"])
 
@@ -1030,18 +1167,79 @@ def _publicdb_tables(matrix: pd.DataFrame, stats: pd.DataFrame, clinical: pd.Dat
 
 
 def _wgcna_tables(matrix: pd.DataFrame, clinical: pd.DataFrame, tables_dir: Path) -> dict[str, str]:
+    """Real WGCNA co-expression modules, or an explicit skipped record.
+
+    The former quantile-binning implementation mislabelled four bins
+    bins as "blue/brown/turquoise/yellow WGCNA modules"; that is removed. A real
+    network needs >= 15 samples and the R ``WGCNA`` package. When either is
+    absent we write a status=skipped table with the concrete reason.
+    """
     modules = tables_dir / "wgcna_module_assignments.tsv"
     trait = tables_dir / "wgcna_trait_associations.tsv"
-    corr = matrix.T.corr().fillna(0.0)
-    module_ids = pd.cut(corr.mean(axis=1).rank(method="first"), bins=4, labels=["blue", "brown", "turquoise", "yellow"])
-    pd.DataFrame({"feature_id": corr.index.astype(str), "module": module_ids.astype(str)}).to_csv(modules, sep="\t", index=False)
-    rows = []
-    for module_name in sorted(set(module_ids.astype(str))):
-        genes = module_ids.index[module_ids.astype(str) == module_name]
-        eigengene = matrix.loc[genes].mean(axis=0)
-        rows.append({"module": module_name, "mean_eigengene": float(eigengene.mean()), "n_features": int(len(genes))})
-    pd.DataFrame(rows).to_csv(trait, sep="\t", index=False)
-    return {"wgcna_module_assignments": str(modules), "wgcna_trait_associations": str(trait)}
+    status_path = tables_dir / "wgcna_backend_status.tsv"
+    n_samples = matrix.shape[1]
+    if n_samples < 15:
+        reason = f"insufficient_samples_for_wgcna:have_{n_samples}_need_15"
+    else:
+        reason_obj, detail = _r_engine_available("wgcna", "wgcna_backend.R", "WGCNA")
+        reason = "" if reason_obj == "ready" else reason_obj + ":" + detail
+
+    if reason:
+        skip = pd.DataFrame([{"module": "none", "status": "skipped", "skip_reason": reason, "n_samples": n_samples}])
+        skip.to_csv(modules, sep="\t", index=False)
+        skip.to_csv(trait, sep="\t", index=False)
+        pd.DataFrame([{"backend_id": "wgcna.blockwiseModules", "status": "skipped", "reason": reason,
+                       "analysis_level": "skipped", "n_samples": n_samples}]).to_csv(status_path, sep="\t", index=False)
+        return {
+            "wgcna_module_assignments": str(modules),
+            "wgcna_trait_associations": str(trait),
+            "wgcna_backend_status": str(status_path),
+            "wgcna_status": "skipped",
+            "wgcna_skip_reason": reason,
+        }
+
+    rscript = resolve_rscript("wgcna")
+    script_path = resolve_packaged_asset("scripts", "R", "wgcna_backend.R")
+    matrix_tsv = tables_dir / "wgcna_input_matrix.tsv"
+    samples_tsv = tables_dir / "wgcna_input_samples.tsv"
+    _matrix_to_tsv(matrix, matrix_tsv)
+    samples = clinical.copy()
+    if "sample_id" not in samples.columns:
+        samples["sample_id"] = matrix.columns.astype(str)
+    samples.to_csv(samples_tsv, sep="\t", index=False)
+    object_path = tables_dir.parents[1] / "objects" / "wgcna" / "wgcna_backend.rds"
+    object_path.parent.mkdir(parents=True, exist_ok=True)
+    trait_column = "condition" if "condition" in samples.columns else ""
+    command = [
+        str(rscript), str(script_path),
+        "--matrix", str(matrix_tsv), "--samples", str(samples_tsv),
+        "--modules", str(modules), "--trait", str(trait),
+        "--object", str(object_path), "--trait-column", trait_column,
+    ]
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        if payload.get("status") != "ready":
+            raise RuntimeError(payload.get("reason", "r_wgcna_not_ready"))
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, IndexError, RuntimeError) as exc:
+        skip_reason = f"r_wgcna_failed:{type(exc).__name__}"
+        skip = pd.DataFrame([{"module": "none", "status": "skipped", "skip_reason": skip_reason, "n_samples": n_samples}])
+        skip.to_csv(modules, sep="\t", index=False)
+        skip.to_csv(trait, sep="\t", index=False)
+        pd.DataFrame([{"backend_id": "wgcna.blockwiseModules", "status": "skipped", "reason": skip_reason,
+                       "analysis_level": "skipped", "n_samples": n_samples}]).to_csv(status_path, sep="\t", index=False)
+        return {
+            "wgcna_module_assignments": str(modules), "wgcna_trait_associations": str(trait),
+            "wgcna_backend_status": str(status_path), "wgcna_status": "skipped", "wgcna_skip_reason": skip_reason,
+        }
+    pd.DataFrame([{"backend_id": "wgcna.blockwiseModules", "status": "ready", "reason": "",
+                   "analysis_level": "validated_backend", "softPower": payload.get("softPower"),
+                   "n_samples": n_samples, "rds_object": str(object_path)}]).to_csv(status_path, sep="\t", index=False)
+    return {
+        "wgcna_module_assignments": str(modules), "wgcna_trait_associations": str(trait),
+        "wgcna_backend_status": str(status_path), "wgcna_status": "ready",
+        "wgcna_rds": str(object_path),
+    }
 
 
 def _single_gene_tables(
@@ -1152,6 +1350,7 @@ def _write_module_figures(
     inputs: BulkInputs,
     figures_dir: Path,
     module_cfg: dict[str, Any],
+    clinical: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     paths: dict[str, str] = {}
     if module_name in {"proteomics", "wgcna", "clinical_assoc"}:
@@ -1159,9 +1358,19 @@ def _write_module_figures(
         _plot_correlation(matrix, path, title=f"{module_name} correlation")
         paths["correlation_network_proxy"] = str(path)
     if module_name in {"publicdb", "single_gene", "clinical_assoc"}:
-        path = figures_dir / "survival_proxy.png"
-        _plot_survival_proxy(path)
-        paths["survival_proxy"] = str(path)
+        # Real Kaplan-Meier analysis from the clinical table; no fixed curve.
+        feature = str(stats.iloc[0]["feature_id"]) if len(stats) else str(matrix.index[0])
+        expr = matrix.loc[feature] if feature in matrix.index else matrix.iloc[0]
+        survival = run_survival_analysis(
+            clinical if clinical is not None else pd.DataFrame(),
+            expr,
+            figures_dir=figures_dir,
+            tables_dir=figures_dir.parent / "tables" / module_name,
+            label=feature,
+            module_name=module_name,
+        )
+        paths["survival"] = survival.figure_path
+        paths["survival_status"] = survival.status
     if module_name == "methylation":
         path = figures_dir / "beta_density.png"
         _plot_beta_density(matrix, path)
@@ -1227,22 +1436,6 @@ def _plot_correlation(matrix: pd.DataFrame, path: Path, title: str) -> None:
     save_figure(path, style=tokens)
 
 
-def _plot_survival_proxy(path: Path) -> None:
-    tokens = apply_clinical_journal_style()
-    months = np.arange(0, 61, 6)
-    high = np.exp(-months / 36)
-    low = np.exp(-months / 56)
-    plt.figure(figsize=(6, 4))
-    plt.step(months, high, where="post", label="High group", color=tokens["case"], linewidth=1.7)
-    plt.step(months, low, where="post", label="Low group", color=tokens["control"], linewidth=1.7)
-    plt.xlabel("Months")
-    plt.ylabel("Survival probability")
-    plt.title("Survival proxy")
-    plt.legend()
-    plt.tight_layout()
-    save_figure(path, style=tokens)
-
-
 def _plot_beta_density(matrix: pd.DataFrame, path: Path) -> None:
     tokens = apply_clinical_journal_style()
     plt.figure(figsize=(6, 4))
@@ -1268,12 +1461,12 @@ def _write_bulk_objects(module_name: str, matrix: pd.DataFrame, stats: pd.DataFr
         "top_features": stats.head(15)["feature_id"].tolist(),
     }
     json_path = objects_dir / "object_manifest.json"
-    rds_path = objects_dir / f"{module_name}_python_object.rds"
-    rdata_path = objects_dir / f"{module_name}_workspace.RData"
+    rds_path = objects_dir / f"{module_name}_python_object.json"
+    rdata_path = objects_dir / f"{module_name}_workspace_summary.json"
     json_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     rds_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     rdata_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-    return {"manifest": str(json_path), "rds": str(rds_path), "RData": str(rdata_path)}
+    return {"manifest": str(json_path), "python_object": str(rds_path), "workspace_summary": str(rdata_path)}
 
 
 def _write_backend_samplesheet(samples: pd.DataFrame, tables_dir: Path) -> Path:

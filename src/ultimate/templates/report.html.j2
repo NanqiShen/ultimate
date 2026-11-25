@@ -13,6 +13,16 @@
     th { background: {{ style.get("bar_light", "#DDF4F3") }}; color: {{ style.get("text", "#4B5368") }}; }
     code { background: #F6F8FB; color: {{ style.get("axis", "#7B8498") }}; padding: 2px 4px; border-radius: 4px; }
     .warn { color: {{ style.get("case", "#F26F8F") }}; }
+    .summary-cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+    .card { border: 1px solid {{ style.get("grid", "#EEF2F7") }}; border-radius: 8px; padding: 12px 16px; min-width: 140px; background: #FAFBFD; }
+    .card .label { font-size: 12px; color: {{ style.get("axis", "#7B8498") }}; }
+    .card .value { font-size: 22px; font-weight: 600; color: {{ style.get("primary", "#8C6FF7") }}; }
+    .figure-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; margin: 12px 0; }
+    .figure-grid figure { margin: 0; border: 1px solid {{ style.get("grid", "#EEF2F7") }}; border-radius: 6px; padding: 8px; }
+    .figure-grid img { max-width: 100%; height: auto; display: block; }
+    .figure-grid figcaption { font-size: 12px; color: {{ style.get("axis", "#7B8498") }}; margin-top: 6px; }
+    .top-table { max-height: 340px; overflow: auto; }
+    .boundary { border-left: 4px solid {{ style.get("secondary", "#31C5B7") }}; background: #F4FAFA; padding: 10px 14px; margin: 12px 0; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -22,6 +32,20 @@
   <p>出图风格：{{ manifest.figure_style.style_cn | default("临床期刊版") }}；审阅图清单：<code>{{ manifest.style_review.figure_manifest }}</code></p>
   {% set figure_qc = manifest.get("figure_qc") or {} %}
   <p>真实图表清单：<code>{{ figure_qc.get("figure_manifest", "not_recorded") }}</code>；布局 QA：<code>{{ figure_qc.get("layout_qc", "not_recorded") }}</code></p>
+
+  <h2>执行摘要</h2>
+  {% set summary = summary or {} %}
+  <div class="summary-cards">
+    <div class="card"><div class="label">模块数</div><div class="value">{{ summary.get("n_modules", 0) }}</div></div>
+    <div class="card"><div class="label">样本数</div><div class="value">{{ summary.get("n_samples", "NA") }}</div></div>
+    <div class="card"><div class="label">门控状态</div><div class="value">{{ summary.get("gate_status", "not_recorded") }}</div></div>
+    <div class="card"><div class="label">正式交付许可</div><div class="value">{{ summary.get("delivery_allowed", false) }}</div></div>
+    <div class="card"><div class="label">线程预算</div><div class="value">{{ summary.get("threads", "NA") }}</div></div>
+  </div>
+  {% if summary.get("warnings") %}
+    <p class="warn">关键警示：{{ summary.get("warnings") | join("; ") }}</p>
+  {% endif %}
+  <div class="boundary">结果解释边界：本报告中的统计分析仅针对本次输入数据与预设流程；相关性、差异或富集结果不等同于机制证明或临床结论。skip/blocked 的后端不得解读为已完成分析。</div>
 
   <h2>交付门控</h2>
   {% set gate = delivery_gate or manifest.get("delivery_gate") or {} %}
@@ -172,6 +196,29 @@
         <li>报告片段 {{ key }}：<code>{{ value }}</code></li>
       {% endfor %}
     </ul>
+    {% set visual = (module_visuals or {}).get(module.module, {}) %}
+    {% if visual.get("figures") %}
+      <h4>结果图表</h4>
+      <div class="figure-grid">
+      {% for fig in visual["figures"] %}
+        <figure>
+          {% if embed_images and fig.data_uri %}<img src="{{ fig.data_uri }}" alt="{{ fig.label }}">{% else %}<img src="../{{ fig.src }}" alt="{{ fig.label }}">{% endif %}
+          <figcaption>{{ fig.label }}</figcaption>
+        </figure>
+      {% endfor %}
+      </div>
+    {% endif %}
+    {% if visual.get("warnings") %}
+      <p class="warn">降级/跳过状态：{{ visual["warnings"] | join("; ") }}</p>
+    {% endif %}
+    {% for table in visual.get("tables") or [] %}
+      <h4>Top 10：{{ table.key }}</h4>
+      <div class="top-table"><table>
+        <thead><tr>{% for col in table.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in table.rows %}<tr>{% for col in table.columns %}<td>{{ row.get(col, "") }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table></div>
+    {% endfor %}
+    <div class="boundary">解释边界：上表为结果预览（最多 10 行），完整数据见表清单；必须结合分析级别、backend 状态与限制警示解释。</div>
   {% endfor %}
 </body>
 </html>

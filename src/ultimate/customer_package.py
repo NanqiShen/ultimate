@@ -121,9 +121,43 @@ def _default_customer_dir(run_dir: Path, job_dir: Path | None) -> Path:
     return run_dir / "deliverables" / "customer"
 
 
+_IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")', flags=re.IGNORECASE)
+
+
+def _rewrite_report_image_paths(text: str) -> str:
+    """Rewrite report image sources to customer-package relative paths.
+
+    The source report lives in ``<run>/reports/`` and references
+    ``../results/figures/<module>/<file>``. The customer package flattens every
+    figure into ``deliverables/customer/figures/<module>/<file>``, so the path
+    must become ``figures/<module>/<file>``. Absolute or ``..``-escaping paths
+    would otherwise break the standalone HTML. base64 data URIs are untouched.
+    """
+    def replace(match: re.Match[str]) -> str:
+        prefix, src, suffix = match.group(1), match.group(2), match.group(3)
+        if src.startswith("data:") or src.startswith("figures/"):
+            return match.group(0)
+        marker = "results/figures/"
+        pos = src.replace("\\", "/").find(marker)
+        if pos >= 0:
+            relative = src.replace("\\", "/")[pos + len(marker):]
+            return f'{prefix}figures/{relative}{suffix}'
+        # Any remaining relative ../figure path: keep only the trailing figures/
+        parts = src.replace("\\", "/").split("/")
+        if "figures" in parts:
+            idx = parts.index("figures")
+            return f'{prefix}figures/{"/".join(parts[idx + 1:])}{suffix}'
+        return match.group(0)
+
+    return _IMG_SRC_RE.sub(replace, text)
+
+
 def _write_sanitized_text(source: Path, target: Path, *, fallback: str, copied: list[dict[str, str]], artifact_type: str) -> None:
     text = source.read_text(encoding="utf-8", errors="ignore") if source.exists() else fallback
-    target.write_text(_sanitize_text(text), encoding="utf-8")
+    sanitized = _sanitize_text(text)
+    if artifact_type == "report" and target.suffix.lower() in {".html", ".htm"}:
+        sanitized = _rewrite_report_image_paths(sanitized)
+    target.write_text(sanitized, encoding="utf-8")
     copied.append({"artifact_type": artifact_type, "file": target.name, "customer_visible": "true", "sanitized": "true", "note": "sanitized customer-facing text"})
 
 

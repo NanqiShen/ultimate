@@ -263,7 +263,10 @@ def _write_skip_outputs(
     artifacts["manifest"].write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     _write_placeholder_png(artifacts["volcano"], "RNA-seq DE backend skipped")
     _write_placeholder_png(artifacts["top_gene_heatmap"], "RNA-seq DE backend skipped")
-    artifacts["rds"].write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    # Python never writes a JSON payload into a .rds filename: on skip we emit
+    # a separately named honest JSON file instead of faking an R object.
+    skip_object = artifacts["rds"].with_name("rnaseq_de_backend_skip.json")
+    skip_object.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
 
 def _write_placeholder_png(path: Path, title: str) -> None:

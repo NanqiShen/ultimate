@@ -24,7 +24,7 @@ def _write_scoped_prepared_job(root: Path, job_id: str) -> None:
     (run_dir / "reproducible_code").mkdir(parents=True)
     figure_path = run_dir / "results" / "figures" / "rnaseq" / "pca.png"
     table_path = run_dir / "results" / "tables" / "rnaseq" / "sample_qc.tsv"
-    object_path = run_dir / "objects" / "rnaseq" / "rnaseq_mvp_object.rds"
+    object_path = run_dir / "objects" / "rnaseq" / "rnaseq_mvp_object.json"
     report_path = run_dir / "reports" / "report.html"
     methods_path = run_dir / "reports" / "methods.md"
     rerun_path = run_dir / "reproducible_code" / "rerun.sh"
@@ -423,14 +423,14 @@ def test_production_audit_accepts_perturb_public_validation_path(tmp_path: Path)
     for figure_name in figure_names:
         fig_path = run_dir / "results" / "figures" / figure_name
         fig_path.write_text("png", encoding="utf-8")
-    object_path = run_dir / "objects" / "perturb_seq_mvp_object.rds"
+    object_path = run_dir / "objects" / "perturb_seq_mvp_object.json"
     object_path.write_text("{}", encoding="utf-8")
     (run_dir / "reports" / "report.md").write_text("report", encoding="utf-8")
     (run_dir / "reports" / "report.html").write_text("report", encoding="utf-8")
     manifest_payload = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
     manifest_payload["tables"] = [f"results/tables/{table_name}" for table_name in table_names]
     manifest_payload["figures"] = [f"results/figures/{figure_name}" for figure_name in figure_names]
-    manifest_payload["objects"] = {"mvp_object": "objects/perturb_seq_mvp_object.rds"}
+    manifest_payload["objects"] = {"mvp_object": "objects/perturb_seq_mvp_object.json"}
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest_payload), encoding="utf-8")
 
     manifest = run_production_audit(root=root, output_dir=tmp_path / "audit")
@@ -506,7 +506,7 @@ def test_production_audit_rejects_validation_with_old_mvp_table_schema(tmp_path:
         )
     for figure_name in ("guide_distribution.png", "perturbation_umap_placeholder.png"):
         (run_dir / "results" / "figures" / figure_name).write_text("png", encoding="utf-8")
-    (run_dir / "objects" / "perturb_seq_mvp_object.rds").write_text("{}", encoding="utf-8")
+    (run_dir / "objects" / "perturb_seq_mvp_object.json").write_text("{}", encoding="utf-8")
     (run_dir / "reports" / "report.html").write_text("report", encoding="utf-8")
     (run_dir / "reports" / "methods.md").write_text("methods", encoding="utf-8")
     (run_dir / "run_manifest.json").write_text(
@@ -531,7 +531,7 @@ def test_production_audit_rejects_validation_with_old_mvp_table_schema(tmp_path:
                     "results/figures/guide_distribution.png",
                     "results/figures/perturbation_umap_placeholder.png",
                 ],
-                "objects": {"mvp_object": "objects/perturb_seq_mvp_object.rds"},
+                "objects": {"mvp_object": "objects/perturb_seq_mvp_object.json"},
             }
         ),
         encoding="utf-8",
@@ -760,7 +760,7 @@ def test_production_audit_accepts_arrmdata_methylation_public_validation(tmp_pat
         (run_dir / "results" / "tables" / f"table_{idx}.tsv").write_text("a\n1\n", encoding="utf-8")
     for idx in range(4):
         (run_dir / "results" / "figures" / f"figure_{idx}.png").write_text("png", encoding="utf-8")
-    (run_dir / "objects" / "methylation_mvp_object.rds").write_text("object", encoding="utf-8")
+    (run_dir / "objects" / "methylation_mvp_object.json").write_text("object", encoding="utf-8")
     (run_dir / "reports" / "report.html").write_text("<html>report</html>", encoding="utf-8")
     (run_dir / "reports" / "methods.md").write_text("methods", encoding="utf-8")
     (run_dir / "run_manifest.json").write_text(
@@ -910,7 +910,7 @@ def test_production_audit_requires_module_report_job_mirrors_when_declared(tmp_p
     (run_dir / "reproducible_code").mkdir(parents=True)
     figure_path = run_dir / "results" / "figures" / "rnaseq" / "pca.png"
     table_path = run_dir / "results" / "tables" / "rnaseq" / "sample_qc.tsv"
-    object_path = run_dir / "objects" / "rnaseq" / "rnaseq_mvp_object.rds"
+    object_path = run_dir / "objects" / "rnaseq" / "rnaseq_mvp_object.json"
     report_path = run_dir / "reports" / "report.html"
     methods_path = run_dir / "reports" / "methods.md"
     module_report = run_dir / "reports" / "rnaseq" / "report.html"

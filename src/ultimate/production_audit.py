@@ -1044,7 +1044,7 @@ def _module_mvp_artifact_status(manifest: dict[str, Any], run_dir: Path, module_
         return "not_required", []
     expected_tables = MODULE_MVP_TABLES.get(module_name, ())
     expected_figures = MODULE_MVP_FIGURES.get(module_name, ())
-    expected_object = MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.rds")
+    expected_object = MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.json")
     if not expected_tables and not expected_figures and not expected_object:
         return "not_required", []
 

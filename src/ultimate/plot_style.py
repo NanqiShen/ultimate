@@ -924,19 +924,26 @@ def _figure_dotplot(path: Path, tokens: dict[str, Any], opts: dict[str, Any]) ->
 
 
 def _figure_km(path: Path, tokens: dict[str, Any], opts: dict[str, Any]) -> None:
-    months = np.arange(0, 61, 6)
-    high = np.exp(-months / 34)
-    low = np.exp(-months / 58)
+    """Style-review template for a Kaplan-Meier panel.
+
+    This is a *layout preview* only: it draws no survival estimates. Real curves
+    must come from ``ultimate.survival_backend`` on actual clinical data, so the
+    axes here are intentionally left empty rather than filled with a fabricated
+    exponential curve.
+    """
     fig, ax = _new_figure((6.4, 4.8))
-    ax.step(months, high, where="post", label="High risk", color=tokens["case"], linewidth=1.8)
-    ax.step(months, low, where="post", label="Low risk", color=tokens["control"], linewidth=1.8)
-    _decorate_axes(ax, "Kaplan-Meier", "Months", "Survival probability", tokens, opts, panel_label="I", subtitle="Risk-group example")
+    _decorate_axes(
+        ax, "Kaplan-Meier (style template)", "Months", "Survival probability",
+        tokens, opts, panel_label="I", subtitle="Style template only - no data",
+    )
     ax.set_xlim(0, 60)
     ax.set_xticks([0, 12, 24, 36, 48, 60])
     ax.set_ylim(0, 1.00)
     ax.set_yticks([0, 0.25, 0.50, 0.75, 1.00])
+    ax.text(30, 0.5, "No survival data in style review\nReal KM is drawn by survival_backend",
+            ha="center", va="center", fontsize=10, color="0.45")
     _place_legend(ax, opts)
-    _caption(fig, "Legend outside.", tokens, opts)
+    _caption(fig, "Style template - not an analysis result.", tokens, opts)
     save_figure(path, style=tokens, close=False)
 
 

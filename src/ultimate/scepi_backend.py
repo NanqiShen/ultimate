@@ -48,7 +48,7 @@ SCEPI_BACKEND_METADATA: dict[str, Any] = {
         "annotation_summary.tsv",
     ),
     "required_figures": ("pca.png", "sample_correlation_heatmap.png", "region_heatmap.png"),
-    "object_contract": ("scepi_mvp_object.json", "scepi_mvp_object.rds"),
+    "object_contract": ("scepi_mvp_object.json", "scepi_mvp_object.json"),
     "warning": SCEPI_WARNING,
 }
 
@@ -631,7 +631,7 @@ def _write_scepi_figures(*, tables_dir: Path, figures_dir: Path) -> dict[str, st
 
 def _write_scepi_object(*, objects_dir: Path, data: dict[str, Any], max_features: int) -> dict[str, str]:
     object_path = objects_dir / "scepi_mvp_object.json"
-    rds_compat_path = objects_dir / "scepi_mvp_object.rds"
+    rds_compat_path = objects_dir / "scepi_mvp_object.json"
     matrix = np.asarray(data["matrix"], dtype=float)
     variances = np.nanvar(matrix, axis=1)
     selected = np.argsort(variances)[::-1][: min(max_features, len(variances))]
@@ -706,7 +706,7 @@ def _write_skip_outputs(*, tables_dir: Path, figures_dir: Path, objects_dir: Pat
         table_paths[filename.replace(".tsv", "")] = _write_tsv(pd.DataFrame([row]), tables_dir / filename)
     figure_paths = _write_placeholder_figures(figures_dir)
     object_path = objects_dir / "scepi_mvp_object.json"
-    rds_compat_path = objects_dir / "scepi_mvp_object.rds"
+    rds_compat_path = objects_dir / "scepi_mvp_object.json"
     object_path.write_text(json.dumps({"status": "skipped_missing_input"}, indent=2), encoding="utf-8")
     rds_compat_path.write_text(json.dumps({"status": "skipped_missing_input"}, indent=2), encoding="utf-8")
     return {"tables": table_paths, "figures": figure_paths, "objects": {"mvp_object": str(object_path), "rds_compat_object": str(rds_compat_path)}}

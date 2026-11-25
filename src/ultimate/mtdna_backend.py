@@ -601,7 +601,7 @@ def _write_mtdna_figures(*, tables_dir: Path, figures_dir: Path) -> dict[str, st
 
 
 def _write_mtdna_object(*, objects_dir: Path, data: dict[str, Any], input_ref: str) -> dict[str, str]:
-    path = objects_dir / "mtdna_mvp_object.rds"
+    path = objects_dir / "mtdna_mvp_object.json"
     payload = {
         "object_type": "mtdna_lineage_ready_mvp",
         "input_ref": input_ref,
@@ -630,7 +630,7 @@ def _write_skip_outputs(*, tables_dir: Path, figures_dir: Path, objects_dir: Pat
         path = tables_dir / f"{key}.tsv"
         pd.DataFrame(columns=columns).to_csv(path, sep="\t", index=False)
         tables[key] = str(path)
-    object_path = objects_dir / "mtdna_mvp_object.rds"
+    object_path = objects_dir / "mtdna_mvp_object.json"
     object_path.write_text(json.dumps({"status": "skipped", **analysis_fields}, indent=2), encoding="utf-8")
     fig, ax = plt.subplots(figsize=(5.0, 3.2))
     ax.text(0.5, 0.5, "mtDNA backend skipped", ha="center", va="center")

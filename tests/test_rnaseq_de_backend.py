@@ -194,7 +194,7 @@ def test_rnaseq_de_backend_ready_path_with_fake_rscript_keeps_mvp_contract(tmp_p
         assert Path(tables[key]).exists(), key
     for key in ("pca", "sample_correlation_heatmap", "volcano", "top_gene_heatmap", "de_backend_volcano", "de_backend_top_gene_heatmap"):
         assert Path(figures[key]).exists(), key
-    assert Path(objects["mvp_object"]).name == "rnaseq_mvp_object.rds"
+    assert Path(objects["mvp_object"]).name == "rnaseq_mvp_object.json"
     assert Path(objects["rnaseq_de_backend_rds"]).exists()
 
     status_text = Path(tables["de_backend_status"]).read_text(encoding="utf-8")

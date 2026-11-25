@@ -431,7 +431,7 @@ def _write_genotype_figures(*, tables_dir: Path, figures_dir: Path) -> dict[str,
 
 
 def _write_genotype_object(*, objects_dir: Path, data: dict[str, Any], input_ref: str) -> dict[str, str]:
-    path = objects_dir / "genotype_demux_mvp_object.rds"
+    path = objects_dir / "genotype_demux_mvp_object.json"
     payload = {
         "object_type": "json_serialized_genotype_demux_mvp",
         "input_ref": input_ref,
@@ -461,7 +461,7 @@ def _write_skip_outputs(*, tables_dir: Path, figures_dir: Path, objects_dir: Pat
         plt.axis("off")
         save_figure(path, style=apply_clinical_journal_style())
         artifacts["figures"][figure_name] = str(path)
-    object_path = objects_dir / "genotype_demux_mvp_object.rds"
+    object_path = objects_dir / "genotype_demux_mvp_object.json"
     object_path.write_text(json.dumps(base, indent=2, ensure_ascii=False), encoding="utf-8")
     artifacts["objects"]["mvp_object"] = str(object_path)
     return artifacts

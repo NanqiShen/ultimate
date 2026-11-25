@@ -108,7 +108,7 @@ def test_tumor_sc_backend_generates_summary_outputs(tmp_path: Path) -> None:
     assert Path(module["artifacts"]["figures"]["tme_composition"]).exists()
     assert Path(module["artifacts"]["figures"]["tumor_state_heatmap"]).exists()
     assert Path(module["artifacts"]["figures"]["malignant_candidate_summary"]).exists()
-    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "tumor_sc_mvp_object.rds"
+    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "tumor_sc_mvp_object.json"
 
     malignant = pd.read_csv(run_dir / "results" / "tables" / "tumor_sc" / "malignant_cell_candidates.tsv", sep="\t")
     assert malignant["malignant_candidate"].astype(bool).sum() == 2

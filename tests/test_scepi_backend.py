@@ -101,7 +101,7 @@ def test_scepi_backend_generates_matrix_level_outputs(tmp_path: Path) -> None:
         path = Path(scepi["artifacts"]["figures"][key])
         assert path.exists() and path.stat().st_size > 0
     assert (run_dir / "objects" / "scepi" / "scepi_mvp_object.json").exists()
-    assert (run_dir / "objects" / "scepi" / "scepi_mvp_object.rds").exists()
+    assert (run_dir / "objects" / "scepi" / "scepi_mvp_object.json").exists()
     feature_qc = pd.read_csv(run_dir / "results" / "tables" / "scepi" / "feature_qc.tsv", sep="\t")
     assert {"feature_id", "mean_signal", "variance_signal", "region_class", "interpretation_warning"}.issubset(feature_qc.columns)
     assert {"promoter", "enhancer"}.issubset(set(feature_qc["region_class"]))

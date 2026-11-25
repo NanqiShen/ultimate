@@ -93,7 +93,7 @@ def test_perturb_seq_backend_generates_design_ready_outputs(tmp_path: Path) -> N
         assert path.exists() and path.stat().st_size > 0, key
     assert Path(module["artifacts"]["figures"]["guide_distribution"]).exists()
     assert Path(module["artifacts"]["figures"]["perturbation_umap_placeholder"]).exists()
-    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "perturb_seq_mvp_object.rds"
+    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "perturb_seq_mvp_object.json"
 
     assignment = pd.read_csv(run_dir / "results" / "tables" / "perturb_seq" / "guide_assignment.tsv", sep="\t")
     assert {"control", "targeting"}.issubset(set(assignment["assignment_class"]))

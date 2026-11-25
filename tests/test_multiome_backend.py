@@ -147,7 +147,7 @@ def test_multiome_publication_preset_runs_peak_gene_correlation_outputs(tmp_path
         "results/tables/multiome/peak_gene_correlation_backend_manifest.json",
         "results/tables/multiome/peak_gene_correlation_backend_versions.tsv",
         "results/figures/multiome/peak_gene_correlation_heatmap.png",
-        "objects/multiome/peak_gene_correlation_backend.rds",
+        "objects/multiome/peak_gene_correlation_backend.json",
     ]:
         path = run_dir / relative
         assert path.exists() and path.stat().st_size > 0

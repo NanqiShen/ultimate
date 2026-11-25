@@ -334,7 +334,7 @@ def test_all_modules_emit_declared_mvp_artifacts(tmp_path: Path) -> None:
         for filename in MODULE_MVP_FIGURES[module_name]:
             path = figures_dir / filename
             assert path.exists() and path.stat().st_size > 0, f"{module_name}:{filename}"
-        object_name = MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.rds")
+        object_name = MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.json")
         object_path = objects_dir / object_name
         assert object_path.exists() and object_path.stat().st_size > 0, f"{module_name}:{object_name}"
         assert (tables_dir / "module_qc_manifest.json").exists()

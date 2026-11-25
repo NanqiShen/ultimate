@@ -635,7 +635,7 @@ def _run_spatial_neighborhood_backend(
     versions_path = tables_dir / "spatial_neighborhood_backend_versions.tsv"
     autocorr_fig = figures_dir / "spatial_autocorrelation.png"
     marker_fig = figures_dir / "domain_marker_preview_heatmap.png"
-    object_path = tables_dir.parents[2] / "objects" / "spatial" / "spatial_neighborhood_backend.rds"
+    object_path = tables_dir.parents[2] / "objects" / "spatial" / "spatial_neighborhood_backend.json"
     artifacts = {
         "tables": {
             "spatial_autocorrelation": str(autocorr_path),
