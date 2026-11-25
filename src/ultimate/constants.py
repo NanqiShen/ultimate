@@ -1,0 +1,247 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+SUPPORTED_ORGANISMS = {"human", "mouse"}
+
+PROJECT_TYPES = (
+    "all",
+    "rnaseq",
+    "scrna",
+    "scatac",
+    "multiome",
+    "vdj",
+    "scdna",
+    "mtdna",
+    "scepi",
+    "cite_seq",
+    "spatial",
+    "perturb_seq",
+    "hto_demux",
+    "genotype_demux",
+    "functional_state",
+    "tumor_sc",
+    "clinical_assoc",
+    "method_tools",
+    "methylation",
+    "proteomics",
+    "publicdb",
+    "wgcna",
+    "single_gene",
+)
+
+MODULE_ORDER = (
+    "rnaseq",
+    "scrna",
+    "scatac",
+    "multiome",
+    "vdj",
+    "scdna",
+    "mtdna",
+    "scepi",
+    "cite_seq",
+    "spatial",
+    "perturb_seq",
+    "hto_demux",
+    "genotype_demux",
+    "functional_state",
+    "tumor_sc",
+    "clinical_assoc",
+    "method_tools",
+    "methylation",
+    "proteomics",
+    "publicdb",
+    "wgcna",
+    "single_gene",
+)
+
+
+@dataclass(frozen=True)
+class ModuleSpec:
+    name: str
+    title_cn: str
+    input_kind: str
+    required_columns: tuple[str, ...]
+    optional_commands: tuple[str, ...]
+    optional_r_packages: tuple[str, ...]
+
+
+MODULE_SPECS: dict[str, ModuleSpec] = {
+    "rnaseq": ModuleSpec(
+        name="rnaseq",
+        title_cn="转录组分析",
+        input_kind="fastq_or_count_matrix",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("fastqc", "multiqc", "fastp", "STAR", "hisat2", "featureCounts", "salmon", "Rscript"),
+        optional_r_packages=("DESeq2", "edgeR", "clusterProfiler", "fgsea", "org.Hs.eg.db", "org.Mm.eg.db"),
+    ),
+    "scrna": ModuleSpec(
+        name="scrna",
+        title_cn="单细胞分析",
+        input_kind="10x_h5_mtx_h5ad_fastq_or_non10x_matrix",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript", "cellranger", "STAR", "alevin-fry", "nextflow"),
+        optional_r_packages=("Seurat", "SingleR", "monocle3", "CellChat", "NicheNet", "GSVA", "AUCell", "WGCNA"),
+    ),
+    "scatac": ModuleSpec(
+        name="scatac",
+        title_cn="单细胞ATAC分析",
+        input_kind="fastq_fragments_peak_matrix_or_10x_atac_output",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("cellranger-atac", "bwa", "macs2", "bedtools", "samtools", "Rscript"),
+        optional_r_packages=("Signac", "Seurat", "chromVAR", "GenomicRanges"),
+    ),
+    "multiome": ModuleSpec(
+        name="multiome",
+        title_cn="单细胞Multiome分析",
+        input_kind="10x_arc_output_multiome_h5_fragments_or_h5mu",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("cellranger-arc", "bwa", "macs2", "bedtools", "samtools", "Rscript"),
+        optional_r_packages=("Signac", "Seurat", "chromVAR", "GenomicRanges"),
+    ),
+    "vdj": ModuleSpec(
+        name="vdj",
+        title_cn="单细胞免疫组库分析",
+        input_kind="10x_vdj_contig_airr_or_fastq",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("cellranger", "mixcr", "nextflow", "Rscript"),
+        optional_r_packages=("scRepertoire", "immunarch"),
+    ),
+    "scdna": ModuleSpec(
+        name="scdna",
+        title_cn="单细胞DNA/基因组分析",
+        input_kind="bam_fastq_variant_tables_or_platform_exports",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("samtools", "bcftools", "bwa", "bedtools"),
+        optional_r_packages=(),
+    ),
+    "mtdna": ModuleSpec(
+        name="mtdna",
+        title_cn="单细胞线粒体基因组分析",
+        input_kind="bam_fastq_mtdna_variant_or_specialty_outputs",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("samtools", "bcftools", "cellsnp-lite", "vireo"),
+        optional_r_packages=(),
+    ),
+    "scepi": ModuleSpec(
+        name="scepi",
+        title_cn="单细胞表观遗传组分析",
+        input_kind="single_cell_epigenomics",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("samtools", "bedtools", "macs2", "Rscript"),
+        optional_r_packages=("Signac", "chromVAR", "minfi", "GenomicRanges"),
+    ),
+    "cite_seq": ModuleSpec(
+        name="cite_seq",
+        title_cn="CITE-seq/ADT标签分析",
+        input_kind="rna_adt_matrix",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("Seurat", "dsb"),
+    ),
+    "spatial": ModuleSpec(
+        name="spatial",
+        title_cn="空间转录组分析",
+        input_kind="visium_xenium_cosmx_merscope_merfish_slideseq_stereoseq_or_spatialdata",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("spaceranger", "Rscript"),
+        optional_r_packages=("SpatialExperiment", "TENxVisiumData", "Seurat"),
+    ),
+    "perturb_seq": ModuleSpec(
+        name="perturb_seq",
+        title_cn="Perturb-seq/CRISPR筛选分析",
+        input_kind="expression_object_plus_guide_counts",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("Seurat", "limma", "clusterProfiler"),
+    ),
+    "hto_demux": ModuleSpec(
+        name="hto_demux",
+        title_cn="HTO/Cell Hashing拆样分析",
+        input_kind="hashtag_count_matrix_or_10x_antibody_capture",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("Seurat", "DropletUtils"),
+    ),
+    "genotype_demux": ModuleSpec(
+        name="genotype_demux",
+        title_cn="Genotype Demultiplex拆样分析",
+        input_kind="bam_vcf_barcode_or_demux_result",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("cellsnp-lite", "vireo", "souporcell_pipeline.py", "demuxlet", "popscle"),
+        optional_r_packages=(),
+    ),
+    "functional_state": ModuleSpec(
+        name="functional_state",
+        title_cn="单细胞代谢/功能状态分析",
+        input_kind="single_cell_expression",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("GSVA", "AUCell", "Seurat"),
+    ),
+    "tumor_sc": ModuleSpec(
+        name="tumor_sc",
+        title_cn="肿瘤单细胞专项分析",
+        input_kind="tumor_single_cell_expression",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("infercnv", "CopyKAT", "Seurat", "survival"),
+    ),
+    "clinical_assoc": ModuleSpec(
+        name="clinical_assoc",
+        title_cn="跨样本/临床关联分析",
+        input_kind="single_cell_plus_clinical",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("survival", "survminer", "GSVA"),
+    ),
+    "method_tools": ModuleSpec(
+        name="method_tools",
+        title_cn="方法学/工具类分析",
+        input_kind="single_cell_objects",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("Seurat", "SingleR"),
+    ),
+    "methylation": ModuleSpec(
+        name="methylation",
+        title_cn="甲基化分析",
+        input_kind="idat_or_beta_matrix",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("minfi", "ChAMP", "limma", "IlluminaHumanMethylationEPICanno.ilm10b4.hg19"),
+    ),
+    "proteomics": ModuleSpec(
+        name="proteomics",
+        title_cn="蛋白组/代谢组分析",
+        input_kind="abundance_table",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("limma", "ropls", "clusterProfiler", "STRINGdb"),
+    ),
+    "publicdb": ModuleSpec(
+        name="publicdb",
+        title_cn="公共数据库挖掘",
+        input_kind="cohort_config_or_matrix",
+        required_columns=("cohort_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("TCGAbiolinks", "GEOquery", "survival", "survminer", "GSVA"),
+    ),
+    "wgcna": ModuleSpec(
+        name="wgcna",
+        title_cn="WGCNA共表达网络",
+        input_kind="expression_matrix",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("WGCNA", "dynamicTreeCut", "clusterProfiler"),
+    ),
+    "single_gene": ModuleSpec(
+        name="single_gene",
+        title_cn="单基因分析",
+        input_kind="expression_matrix",
+        required_columns=("sample_id", "condition"),
+        optional_commands=("Rscript",),
+        optional_r_packages=("survival", "survminer", "maftools", "GSVA"),
+    ),
+}

@@ -1,0 +1,24 @@
+name: ultimate-core
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - click
+  - jinja2
+  - matplotlib
+  - numpy
+  - pandas
+  - pyyaml
+  - scipy
+  - seaborn
+  - scikit-learn
+  - statsmodels
+  - lifelines
+  - h5py
+  - pytest
+  - snakemake
+  - r-base
+  - r-essentials
+  - bioconductor-limma

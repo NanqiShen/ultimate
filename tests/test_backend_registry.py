@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from ultimate.backend_registry import (
+    BACKEND_REGISTRY,
+    BACKEND_ROLES,
+    backend_maturity_rows,
+    build_backend_plan,
+    modules_without_backend,
+    run_audit_backends,
+)
+from ultimate.cli import main
+from ultimate.constants import MODULE_ORDER
+
+
+def test_backend_registry_covers_all_modules_and_uses_valid_roles() -> None:
+    assert not modules_without_backend()
+    modules = {backend.module for backend in BACKEND_REGISTRY}
+    assert set(MODULE_ORDER).issubset(modules)
+    assert {backend.backend_role for backend in BACKEND_REGISTRY}.issubset(set(BACKEND_ROLES))
+    assert any(backend.backend_id == "scrna.mvp.validate_scrna" for backend in BACKEND_REGISTRY)
+    assert any(backend.backend_id == "scrna.pseudobulk.deseq2_edger" for backend in BACKEND_REGISTRY)
+    assert any(backend.backend_id == "rnaseq.de.deseq2_edger" for backend in BACKEND_REGISTRY)
+    assert any(backend.backend_status == "licensed_path_detection" for backend in BACKEND_REGISTRY)
+
+
+def test_backend_plan_records_requested_and_skipped_backends() -> None:
+    config = {
+        "modules": {
+            "scrna": {
+                "preset": "tumor",
+                "backends": {
+                    "annotation": "celltypist",
+                    "communication": "liana,cellchat,nichenet",
+                    "unknown": "not_a_backend",
+                },
+            }
+        }
+    }
+
+    plan = build_backend_plan("scrna", config)
+
+    assert plan["selected_backend_id"] == "scrna.mvp.validate_scrna"
+    active_ids = {row["backend_id"] for row in plan["active_backends"]}
+    assert "scrna.annotation.celltypist" in active_ids
+    assert "scrna.communication.liana" in active_ids
+    assert "scrna.communication.cellchat_optional" in active_ids
+    assert "scrna.communication.nichenet_optional" in active_ids
+    skipped_ids = set(plan["skipped_optional_backends"])
+    assert "scrna.pseudobulk.deseq2_edger" in skipped_ids
+    assert plan["unknown_requested_backends"] == {"unknown": "not_a_backend"}
+    assert not any("backend_not_fully_automatic:scrna.communication.liana" in warning for warning in plan["interpretation_warnings"])
+    assert any("候选互作" in warning for warning in plan["interpretation_warnings"])
+
+
+def test_backend_plan_preset_resolver_selects_advanced_defaults() -> None:
+    communication_plan = build_backend_plan("scrna", {"modules": {"scrna": {"preset": "communication"}}})
+    communication_ids = {row["backend_id"] for row in communication_plan["active_backends"]}
+    assert {
+        "scrna.qc.scrublet",
+        "scrna.annotation.celltypist",
+        "scrna.functional.decoupler_gseapy",
+        "scrna.communication.liana",
+        "scrna.communication.cellchat_optional",
+        "scrna.communication.nichenet_optional",
+    }.issubset(communication_ids)
+    assert {row["backend_id"] for row in communication_plan["preset_selected_backends"]} <= communication_ids
+
+    scatac_plan = build_backend_plan("scatac", {"modules": {"scatac": {"preset": "publication", "backends": {"motif": "chromvar"}}}})
+    scatac_ids = {row["backend_id"] for row in scatac_plan["active_backends"]}
+    assert "scatac.matrix.signac_or_snapatac2_mvp" in scatac_ids
+    assert "scatac.motif.chromvar_signac" in scatac_ids
+    assert "scatac.dar.peak_matrix" in scatac_ids
+    assert not scatac_plan["unknown_requested_backends"]
+
+    assert "multiome.peak_gene.correlation" in {
+        row["backend_id"] for row in build_backend_plan("multiome", {"modules": {"multiome": {"preset": "publication"}}})["active_backends"]
+    }
+    assert "spatial.neighborhood.squidpy" in {
+        row["backend_id"] for row in build_backend_plan("spatial", {"modules": {"spatial": {"preset": "publication"}}})["active_backends"]
+    }
+    assert "proteomics.de.limma_optional" in {
+        row["backend_id"] for row in build_backend_plan("proteomics", {"modules": {"proteomics": {"preset": "publication"}}})["active_backends"]
+    }
+    assert "methylation.dmp.limma_beta" in {
+        row["backend_id"] for row in build_backend_plan("methylation", {"modules": {"methylation": {"preset": "publication"}}})["active_backends"]
+    }
+
+
+def test_v3_tabular_public_backends_are_evidence_gated_entrypoints() -> None:
+    by_id = {backend.backend_id: backend for backend in BACKEND_REGISTRY}
+    expected = {
+        "rnaseq.matrix.python_mvp": "slurm/bulk_validation_suite.sbatch",
+        "rnaseq.de.deseq2_edger": "slurm/bulk_validation_suite.sbatch",
+        "publicdb.cached_tables.python_mvp": "slurm/bulk_validation_suite.sbatch",
+        "clinical_assoc.default.sample_level_stats": "slurm/bulk_validation_suite.sbatch",
+        "wgcna.default.ready_matrix": "slurm/bulk_validation_suite.sbatch",
+        "single_gene.default.gene_report_mvp": "slurm/bulk_validation_suite.sbatch",
+        "methylation.default.beta_matrix_python_mvp": "slurm/bulk_validation_suite.sbatch",
+        "methylation.dmp.limma_beta": "slurm/bulk_validation_suite.sbatch",
+        "proteomics.default.abundance_python_mvp": "slurm/proteomics_backend_validation.sbatch",
+        "proteomics.de.limma_optional": "slurm/proteomics_backend_validation.sbatch",
+        "scrna.qc.scrublet": "slurm/scrna_mvp_validation.sbatch",
+        "scrna.annotation.celltypist": "slurm/scrna_mvp_validation.sbatch",
+        "scrna.functional.decoupler_gseapy": "slurm/scrna_mvp_validation.sbatch",
+        "scrna.communication.liana": "slurm/scrna_mvp_validation.sbatch",
+        "scrna.communication.cellchat_optional": "slurm/scrna_cellchat_validation.sbatch",
+        "scrna.communication.nichenet_optional": "slurm/scrna_nichenet_validation.sbatch",
+        "scrna.pseudobulk.deseq2_edger": "slurm/scrna_pseudobulk_de.sbatch",
+        "scrna.tumor.copykat": "slurm/tumor_sc_copykat_small_validation.sbatch",
+        "scrna.velocity.scvelo": "slurm/scrna_velocity.sbatch",
+        "functional_state.default.signature_scoring": "slurm/bulk_validation_suite.sbatch",
+        "tumor_sc.default.summary_handoff": "slurm/tumor_sc_backend_validation.sbatch",
+        "method_tools.default.delivery_manifest_mvp": "slurm/method_tools_validation.sbatch",
+        "hto_demux.default.matrix_assignment_mvp": "slurm/hto_demux_backend_validation.sbatch",
+        "perturb_seq.default.guide_assignment_mvp": "slurm/perturb_seq_backend_validation.sbatch",
+        "genotype_demux.default.result_import_mvp": "slurm/genotype_demux_backend_validation.sbatch",
+        "mtdna.default.lineage_ready_mvp": "slurm/mtdna_backend_validation.sbatch",
+        "scdna.default.matrix_ready_handoff": "slurm/scdna_backend_validation.sbatch",
+        "scepi.default.matrix_handoff_mvp": "slurm/scepi_backend_validation.sbatch",
+        "cite_seq.optional.dsb": "slurm/cite_seq_dsb_validation.sbatch",
+        "scatac.motif.chromvar_signac": "slurm/scatac_chromvar_validation.sbatch",
+        "scatac.dar.peak_matrix": "slurm/scatac_backend_validation.sbatch",
+        "multiome.peak_gene.correlation": "slurm/multiome_backend_validation.sbatch",
+        "spatial.neighborhood.squidpy": "slurm/spatial_backend_validation.sbatch",
+    }
+
+    for backend_id, slurm_profile in expected.items():
+        backend = by_id[backend_id]
+        assert backend.backend_status in {"fully_automatic_validated_entrypoint", "fully_automatic_mvp"}
+        assert backend.slurm_profile == slurm_profile
+        assert backend.production_allowed is True
+
+
+def test_backend_audit_cli_writes_registry_and_maturity_tables(tmp_path: Path) -> None:
+    manifest = run_audit_backends(root=tmp_path / "ultimate", output_dir=tmp_path / "audit")
+
+    assert Path(manifest["backend_registry"]).exists()
+    assert Path(manifest["backend_registry_json"]).exists()
+    assert Path(manifest["backend_maturity_table"]).exists()
+    assert manifest["backend_count"] == len(BACKEND_REGISTRY)
+    maturity_rows = backend_maturity_rows(tmp_path / "ultimate")
+    assert len(maturity_rows) == len(BACKEND_REGISTRY)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["audit-backends", "--root", str(tmp_path / "ultimate"), "--output-dir", str(tmp_path / "cli_audit")])
+    assert result.exit_code == 0
+    cli_manifest = json.loads(result.output)
+    assert Path(cli_manifest["backend_registry"]).exists()

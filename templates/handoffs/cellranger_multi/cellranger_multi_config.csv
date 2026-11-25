@@ -1,0 +1,11 @@
+[gene-expression]
+reference,references/10x/refdata-gex-GRCh38-2024-A
+create-bam,true
+
+[feature]
+reference,jobs/<job_id>/config/feature_reference.csv
+
+[libraries]
+fastq_id,fastqs,feature_types
+S1_GEX,jobs/<job_id>/raw_links/fastqs,Gene Expression
+S1_ADT,jobs/<job_id>/raw_links/fastqs,Antibody Capture

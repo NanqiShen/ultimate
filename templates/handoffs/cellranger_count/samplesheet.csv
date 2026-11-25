@@ -1,0 +1,2 @@
+sample_id,fastqs,sample,transcriptome,expected_output_h5
+S1,jobs/<job_id>/raw_links/fastqs,S1,references/10x/refdata-gex-GRCh38-2024-A,jobs/<job_id>/runs/cellranger_count/S1/outs/filtered_feature_bc_matrix.h5

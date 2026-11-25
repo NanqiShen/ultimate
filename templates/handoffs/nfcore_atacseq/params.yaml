@@ -1,0 +1,5 @@
+input: samplesheet.csv
+outdir: external/nfcore_atacseq/results
+genome: GRCh38
+aligner: bwa
+macs_gsize: hs

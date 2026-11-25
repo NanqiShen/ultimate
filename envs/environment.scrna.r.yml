@@ -1,0 +1,29 @@
+name: ultimate-scrna-r
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.4
+  - r-seurat
+  - r-azimuth
+  - r-soupx
+  - r-harmony
+  - r-vision
+  - bioconductor-singler
+  - bioconductor-zellkonverter
+  - bioconductor-dropletutils
+  - bioconductor-glmgampoi
+  - bioconductor-gsva
+  - bioconductor-aucell
+  - bioconductor-ucell
+  - bioconductor-dorothea
+  - bioconductor-slingshot
+  - r-wgcna
+  - r-monocle3
+  - bioconductor-clusterprofiler
+  - bioconductor-org.hs.eg.db
+  - bioconductor-org.mm.eg.db
+  - bioconductor-infercnv
+  - r-dsb
+  - r-survival
+  - r-survminer

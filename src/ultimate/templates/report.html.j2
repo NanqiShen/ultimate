@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{{ manifest.project.name }} - Ultimate 多组学报告</title>
+  <style>
+    {% set style = manifest.figure_style or {} %}
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: {{ style.get("text", "#4B5368") }}; background: {{ style.get("background", "#FFFFFF") }}; }
+    h1, h2 { color: {{ style.get("primary", "#8C6FF7") }}; }
+    h3 { color: {{ style.get("secondary", "#31C5B7") }}; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; }
+    th, td { border: 1px solid {{ style.get("grid", "#EEF2F7") }}; padding: 8px; text-align: left; font-size: 14px; }
+    th { background: {{ style.get("bar_light", "#DDF4F3") }}; color: {{ style.get("text", "#4B5368") }}; }
+    code { background: #F6F8FB; color: {{ style.get("axis", "#7B8498") }}; padding: 2px 4px; border-radius: 4px; }
+    .warn { color: {{ style.get("case", "#F26F8F") }}; }
+  </style>
+</head>
+<body>
+  <h1>{{ manifest.project.name }} - Ultimate 多组学生信分析报告</h1>
+  <p>生成时间：{{ generated_at }}</p>
+  <p>物种：{{ manifest.project.organism }}；输出目录：<code>{{ manifest.output_dir }}</code></p>
+  <p>出图风格：{{ manifest.figure_style.style_cn | default("临床期刊版") }}；审阅图清单：<code>{{ manifest.style_review.figure_manifest }}</code></p>
+  {% set figure_qc = manifest.get("figure_qc") or {} %}
+  <p>真实图表清单：<code>{{ figure_qc.get("figure_manifest", "not_recorded") }}</code>；布局 QA：<code>{{ figure_qc.get("layout_qc", "not_recorded") }}</code></p>
+
+  <h2>交付门控</h2>
+  {% set gate = delivery_gate or manifest.get("delivery_gate") or {} %}
+  <table>
+    <tbody>
+      <tr><th>门控状态</th><td><code>{{ gate.get("status", "not_recorded") }}</code></td></tr>
+      <tr><th>运行状态</th><td><code>{{ gate.get("run_status", manifest.get("status", "not_recorded")) }}</code></td></tr>
+      <tr><th>正式交付许可</th><td><code>{{ gate.get("delivery_allowed", false) }}</code></td></tr>
+      <tr><th>验证证据许可</th><td><code>{{ gate.get("validation_evidence_allowed", false) }}</code></td></tr>
+      <tr><th>生产审批</th><td><code>{{ gate.get("approval_status", "not_recorded") }}</code></td></tr>
+      <tr><th>delivery_scope</th><td><code>{{ gate.get("delivery_scope", (manifest.get("production_approval") or {}).get("delivery_scope", manifest.get("delivery_scope", "not_recorded"))) }}</code></td></tr>
+      <tr><th>生产模块</th><td><code>{{ (gate.get("production_modules") or []) | join(", ") or "none" }}</code></td></tr>
+      <tr><th>可交付模块</th><td><code>{{ (gate.get("deliverable_modules") or []) | join(", ") or "none" }}</code></td></tr>
+      <tr><th>验证证据模块</th><td><code>{{ (gate.get("validation_evidence_modules") or []) | join(", ") or "none" }}</code></td></tr>
+      <tr><th>阻断原因</th><td><code>{{ (gate.get("blockers") or []) | join("; ") or gate.get("non_delivery_reason", "none") }}</code></td></tr>
+      <tr><th>不可交付模块</th><td><code>{% for item in gate.get("blocked_modules") or [] %}{{ item.get("module", "unknown") }}={{ item.get("analysis_level", "not_recorded") }}{% if not loop.last %}; {% endif %}{% endfor %}{{ "" if gate.get("blocked_modules") else "none" }}</code></td></tr>
+    </tbody>
+  </table>
+  {% if gate.get("delivery_allowed") is not true %}
+    <p class="warn">当前运行不是正式交付结果；demo、smoke、placeholder 或未审批生产运行不得作为客户正式结论。</p>
+  {% endif %}
+
+  <h2>运行概览</h2>
+  <table>
+    <thead><tr><th>模块</th><th>状态</th><th>analysis_level</th><th>backend</th><th>backend_status</th><th>交付许可</th><th>Raw QC</th><th>特征数</th><th>样本数</th><th>R后端</th></tr></thead>
+    <tbody>
+    {% for module in modules %}
+      <tr>
+        <td>{{ module.title_cn }} ({{ module.module }})</td>
+        <td>{{ module.status }}</td>
+        <td>{{ module.get("analysis_level", "not_recorded") }}</td>
+        <td><code>{{ module.get("backend_id", (module.get("backend") or {}).get("selected_backend_id", "not_recorded")) }}</code></td>
+        <td><code>{{ module.get("backend_status", (module.get("backend") or {}).get("selected_backend_status", "not_recorded")) }}</code></td>
+        <td>{{ module.get("delivery_allowed", false) }}</td>
+        <td>{{ (module.get("raw_qc") or {}).get("status", "not_recorded") }}</td>
+        <td>{{ module.get("n_features", "NA") }}</td>
+        <td>{{ module.get("n_samples", "NA") }}</td>
+        <td>{{ (module.get("formal_backend") or {}).get("r_entrypoint", "python/backend") }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Advanced Backend Execution</h2>
+  {% set advanced = manifest.get("advanced_backend_execution") or {} %}
+  <p>高级 backend 执行表：<code>{{ advanced.get("table", "not_recorded") }}</code>；manifest：<code>{{ advanced.get("manifest_path", "not_recorded") }}</code></p>
+  <table>
+    <thead><tr><th>模块</th><th>backend</th><th>角色</th><th>注册状态</th><th>执行状态</th><th>analysis_level</th><th>跳过/阻断原因</th><th>限制警示</th></tr></thead>
+    <tbody>
+    {% for row in advanced.get("rows") or [] %}
+      <tr>
+        <td>{{ row.get("module", "") }}</td>
+        <td><code>{{ row.get("backend_id", "") }}</code></td>
+        <td><code>{{ row.get("backend_role", "") }}</code></td>
+        <td><code>{{ row.get("backend_registry_status", "") }}</code></td>
+        <td><code>{{ row.get("execution_status", "") }}</code></td>
+        <td><code>{{ row.get("analysis_level", "") }}</code></td>
+        <td><code>{{ row.get("skip_reason", "") or "none" }}</code></td>
+        <td>{{ row.get("interpretation_warning", "") or "none" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="warn">高级算法结果必须按上述执行状态和限制警示解释；skip/blocked backend 不得写成已完成分析。</p>
+
+  <h2>统一出图 QA</h2>
+  {% set figure_options = manifest.get("figure_options") or {} %}
+  <table>
+    <tbody>
+      <tr><th>图表数量</th><td><code>{{ figure_qc.get("figure_count", 0) }}</code></td></tr>
+      <tr><th>布局警告</th><td><code>{{ figure_qc.get("layout_warning_count", 0) }}</code></td></tr>
+      <tr><th>布局失败</th><td><code>{{ figure_qc.get("layout_failed_count", 0) }}</code></td></tr>
+      <tr><th>图表 manifest</th><td><code>{{ figure_qc.get("figure_manifest", "not_recorded") }}</code></td></tr>
+      <tr><th>layout_qc</th><td><code>{{ figure_qc.get("layout_qc", "not_recorded") }}</code></td></tr>
+      <tr><th>标题</th><td><code>{{ figure_options.get("show_title", true) }}</code></td></tr>
+      <tr><th>图例</th><td><code>{{ figure_options.get("show_legend", true) }}</code> / <code>{{ figure_options.get("legend_position", "outside_right") }}</code></td></tr>
+      <tr><th>网格</th><td><code>{{ figure_options.get("show_grid", true) }}</code></td></tr>
+      <tr><th>色条</th><td><code>{{ figure_options.get("show_colorbar", true) }}</code></td></tr>
+    </tbody>
+  </table>
+  <p class="warn">正式交付会读取图表清单和 layout_qc；空图、缺图或明显布局风险会被 delivery-check 阻断。</p>
+
+  <h2>复现信息</h2>
+  {% set repro = manifest.get("reproducible_package") or {} %}
+  {% set slurm = manifest.get("slurm") or {} %}
+  <table>
+    <tbody>
+      <tr><th>可复现命令</th><td><code>{{ manifest.get("reproducible_command", "not_recorded") }}</code></td></tr>
+      <tr><th>配置快照</th><td><code>{{ manifest.get("config_snapshot", "not_recorded") }}</code></td></tr>
+      <tr><th>复现代码包</th><td><code>{{ repro.get("package_dir", "not_recorded") }}</code></td></tr>
+      <tr><th>重跑脚本</th><td><code>{{ repro.get("rerun_script", "not_recorded") }}</code></td></tr>
+      <tr><th>输入校验</th><td><code>{{ repro.get("input_checksums", "not_recorded") }}</code></td></tr>
+      <tr><th>软件版本</th><td><code>{{ repro.get("software_versions", "not_recorded") }}</code></td></tr>
+      <tr><th>Slurm Job ID</th><td><code>{{ slurm.get("slurm_job_id", "") or "not_recorded" }}</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>可选依赖提示</h2>
+  {% for module in preflight.modules %}
+    {% if module.warnings %}
+      <p class="warn">{{ module.title_cn }}：{{ module.warnings | join("; ") }}</p>
+    {% endif %}
+  {% endfor %}
+
+  <h2>主要结果文件</h2>
+  {% for module in modules %}
+    <h3>{{ module.title_cn }}</h3>
+    <ul>
+      {% set raw_qc = module.get("raw_qc") or {} %}
+      {% set artifacts = module.get("artifacts") or {"tables": {}, "figures": {}, "objects": {}} %}
+      <li>analysis_level：<code>{{ module.get("analysis_level", "not_recorded") }}</code></li>
+      <li>交付许可：<code>{{ module.get("delivery_allowed", false) }}</code>；验证证据许可：<code>{{ module.get("validation_evidence_allowed", false) }}</code>；原因：<code>{{ module.get("non_delivery_reason", "") or "none" }}</code></li>
+      {% set backend_plan = module.get("backend_plan") or {} %}
+      <li>selected_backend：<code>{{ module.get("backend_id", backend_plan.get("selected_backend_id", "not_recorded")) }}</code></li>
+      <li>backend_status：<code>{{ module.get("backend_status", backend_plan.get("selected_backend_status", "not_recorded")) }}</code>；backend_role：<code>{{ backend_plan.get("selected_backend_role", "not_recorded") }}</code>；resource_profile：<code>{{ module.get("backend_resource_profile", backend_plan.get("backend_resource_profile", "not_recorded")) }}</code></li>
+      <li>backend_skip_reason：<code>{{ module.get("backend_skip_reason", backend_plan.get("backend_skip_reason", "")) or "none" }}</code></li>
+      <li>skipped_optional_backends：<code>{{ (backend_plan.get("skipped_optional_backends") or []) | join(", ") or "none" }}</code></li>
+      <li>licensed_backend_status：<code>{% for item in backend_plan.get("licensed_backend_status") or [] %}{{ item.get("backend_id") }}={{ item.get("available") }}{% if not loop.last %}; {% endif %}{% endfor %}{{ "" if backend_plan.get("licensed_backend_status") else "none" }}</code></li>
+      <li>backend_interpretation_warnings：<code>{{ (backend_plan.get("interpretation_warnings") or []) | join("; ") or "none" }}</code></li>
+      <li>已知限制：<code>{{ (module.get("limitations") or []) | join("; ") }}</code></li>
+      <li>Handoff/可选后端：<code>{{ ((module.get("handoff") or {}).get("handoff_tools") or []) | join(", ") or "none" }}</code></li>
+      <li>handoff_status：<code>{{ (module.get("handoff") or {}).get("handoff_status", "not_recorded") }}</code></li>
+      <li>handoff_statuses：<code>{{ ((module.get("handoff") or {}).get("handoff_statuses") or []) | join(", ") or "none" }}</code></li>
+      {% set tool_summary = (module.get("handoff") or {}).get("tool_decision_summary") or {} %}
+      {% set v2_tool_summary = (module.get("handoff") or {}).get("v2_disposition_summary") or {} %}
+      <li>默认后端：<code>{{ (tool_summary.get("keep_default") or []) | join(", ") or "none" }}</code></li>
+      <li>可选后端：<code>{{ (tool_summary.get("keep_optional") or []) | join(", ") or "none" }}</code></li>
+      <li>授权路径检测：<code>{{ (tool_summary.get("licensed_path_only") or []) | join(", ") or "none" }}</code></li>
+      <li>v2 default_backend：<code>{{ (v2_tool_summary.get("default_backend") or []) | join(", ") or "none" }}</code></li>
+      <li>v2 optional_backend：<code>{{ (v2_tool_summary.get("optional_backend") or []) | join(", ") or "none" }}</code></li>
+      <li>v2 handoff_adapter：<code>{{ (v2_tool_summary.get("handoff_adapter") or []) | join(", ") or "none" }}</code></li>
+      <li>v2 licensed_path_detection：<code>{{ (v2_tool_summary.get("licensed_path_detection") or []) | join(", ") or "none" }}</code></li>
+      <li>v2 reference_only：<code>{{ (v2_tool_summary.get("reference_only") or []) | join(", ") or "none" }}</code></li>
+      <li>v2 rejected_cleaned：<code>{{ (v2_tool_summary.get("rejected_cleaned") or []) | join(", ") or "none" }}</code></li>
+      <li>Raw QC manifest：<code>{{ raw_qc.get("manifest_path", "not_recorded") }}</code></li>
+      <li>Module QC manifest：<code>{{ (artifacts.get("tables") or {}).get("module_qc_manifest", "not_recorded") }}</code></li>
+      <li>Raw QC 标准矩阵：<code>{{ ((raw_qc.get("artifacts") or {}).get("objects") or {}).get("standard_matrix", "not_recorded") }}</code></li>
+      {% for key, value in (artifacts.get("tables") or {}).items() %}
+        <li>表格 {{ key }}：<code>{{ value }}</code></li>
+      {% endfor %}
+      {% for key, value in (artifacts.get("figures") or {}).items() %}
+        <li>图表 {{ key }}：<code>{{ value }}</code></li>
+      {% endfor %}
+      {% for key, value in (artifacts.get("objects") or {}).items() %}
+        <li>对象 {{ key }}：<code>{{ value }}</code></li>
+      {% endfor %}
+      {% for key, value in (artifacts.get("reports") or {}).items() %}
+        <li>报告片段 {{ key }}：<code>{{ value }}</code></li>
+      {% endfor %}
+    </ul>
+  {% endfor %}
+</body>
+</html>

@@ -1,0 +1,6 @@
+input: samplesheet.csv
+outdir: external/nfcore_sarek/results
+genome: GATK.GRCh38
+tools: mutect2,strelka,cnvkit
+skip_tools: baserecalibrator
+save_mapped: false
