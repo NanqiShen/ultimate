@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ultimate.paths import environment_root
+
 
 DECISIONS = (
     "keep_default",
@@ -442,7 +444,8 @@ def run_prune_tools(root: Path, output_dir: Path | None = None, yes: bool = Fals
 
 def _env_paths(root: Path) -> dict[str, Path]:
     env_names = sorted({tool.env for tool in TOOL_REGISTRY if tool.env})
-    return {env: root / ".conda" / "envs" / env for env in env_names}
+    env_root = environment_root(root)
+    return {env: env_root / env for env in env_names}
 
 
 def _collect_checks(env_paths: dict[str, Path], specs: tuple[ToolSpec, ...] | list[ToolSpec]) -> dict[str, dict[str, bool]]:

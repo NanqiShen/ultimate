@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ultimate.paths import external_root
+from ultimate.paths import environment_root, external_root
 
 import csv
 import importlib.util
@@ -32,8 +32,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞转录组 scRNA-seq",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            str(external_root() / 'singlecell_workbench/.conda/envs/scw-py311'),
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
             str(Path.home() / "miniconda3/envs/nsclc_sc"),
         ),
         python_packages=("scanpy", "anndata", "scvi", "celltypist", "decoupler"),
@@ -45,9 +45,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞 ATAC-seq",
         "ultimate-scatac-multiome",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scatac-py",
-            "{root}/.conda/envs/ultimate-scatac-r",
-            "{root}/.conda/envs/ultimate-genome-mtdna",
+            "{env}/ultimate-scatac-py",
+            "{env}/ultimate-scatac-r",
+            "{env}/ultimate-genome-mtdna",
         ),
         python_packages=("snapatac2",),
         r_packages=("Signac", "Seurat", "chromVAR", "GenomicRanges"),
@@ -60,10 +60,10 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞多组学 Multiome",
         "ultimate-scatac-multiome",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scatac-py",
-            "{root}/.conda/envs/ultimate-scatac-r",
-            str(external_root() / 'singlecell_workbench/.conda/envs/scw-py311'),
-            "{root}/.conda/envs/ultimate-genome-mtdna",
+            "{env}/ultimate-scatac-py",
+            "{env}/ultimate-scatac-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
+            "{env}/ultimate-genome-mtdna",
         ),
         python_packages=("muon", "snapatac2"),
         r_packages=("Signac", "Seurat", "chromVAR"),
@@ -75,7 +75,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "vdj",
         "单细胞免疫组库 VDJ/TCR/BCR",
         "ultimate-vdj",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-vdj-r",),
+        alternate_env_paths=("{env}/ultimate-vdj-r",),
         python_packages=("scirpy", "dandelion"),
         r_packages=("scRepertoire", "immunarch"),
         data_checks=("public_vdj",),
@@ -85,7 +85,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞 DNA-seq / 基因组",
         "ultimate-genome-mtdna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-core",
+            "{env}/ultimate-core",
             str(Path.home() / "miniconda3/envs/star_env"),
             str(Path.home() / "miniconda3/envs/scfusion_final"),
         ),
@@ -98,7 +98,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞线粒体基因组 / mtDNA",
         "ultimate-genome-mtdna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-core",
+            "{env}/ultimate-core",
             str(Path.home() / "miniconda3/envs/star_env"),
             str(Path.home() / "miniconda3/envs/scfusion_final"),
         ),
@@ -111,9 +111,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞表观遗传组",
         "ultimate-scatac-multiome",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scatac-py",
-            "{root}/.conda/envs/ultimate-scatac-r",
-            "{root}/.conda/envs/ultimate-genome-mtdna",
+            "{env}/ultimate-scatac-py",
+            "{env}/ultimate-scatac-r",
+            "{env}/ultimate-genome-mtdna",
         ),
         python_packages=("snapatac2",),
         r_packages=("Signac", "chromVAR", "minfi", "GenomicRanges"),
@@ -125,8 +125,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "CITE-seq / ADT 标签分析",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            str(external_root() / 'singlecell_workbench/.conda/envs/scw-py311'),
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("muon", "scanpy"),
         r_packages=("Seurat", "dsb"),
@@ -137,9 +137,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞空间组学 / 空间转录组",
         "ultimate-spatial",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-spatial-py",
-            "{root}/.conda/envs/ultimate-spatial-r",
-            str(external_root() / 'singlecell_workbench/.conda/envs/scw-py311'),
+            "{env}/ultimate-spatial-py",
+            "{env}/ultimate-spatial-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("squidpy", "spatialdata", "scanpy"),
         r_packages=("SpatialExperiment", "TENxVisiumData", "Seurat"),
@@ -150,7 +150,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "perturb_seq",
         "Perturb-seq / CRISPR 筛选",
         "ultimate-scrna",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("scanpy", "decoupler"),
         r_packages=("Seurat", "limma", "clusterProfiler"),
         data_checks=("nsclc_h5ad",),
@@ -159,7 +159,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "hto_demux",
         "HTO / Cell Hashing 拆样",
         "ultimate-scrna",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("scanpy",),
         r_packages=("Seurat", "DropletUtils"),
         data_checks=("public_cite_seq",),
@@ -168,7 +168,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "genotype_demux",
         "Genotype demultiplex 拆样",
         "ultimate-genome-mtdna",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-core",),
+        alternate_env_paths=("{env}/ultimate-core",),
         python_packages=("pandas",),
         command_groups=(
             ("cellsnp-lite", "vireo"),
@@ -182,8 +182,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞代谢 / 功能状态",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            str(external_root() / 'singlecell_workbench/.conda/envs/scw-py311'),
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("scanpy", "decoupler"),
         r_packages=("GSVA", "AUCell", "Seurat"),
@@ -194,8 +194,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "肿瘤单细胞常见专项",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            str(external_root() / 'singlecell_workbench/.conda/envs/scw-py311'),
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("scanpy", "celltypist", "decoupler"),
         r_packages=("infercnv", "copykat", "Seurat", "survival"),
@@ -205,7 +205,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "clinical_assoc",
         "跨样本 / 临床关联分析",
         "ultimate-core",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("pandas", "numpy", "matplotlib"),
         r_packages=("survival", "GSVA", "survminer"),
         data_checks=("public_geo_validation",),
@@ -214,7 +214,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "method_tools",
         "方法学 / 工具类分析",
         "ultimate-core",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("pandas", "numpy", "matplotlib", "jinja2"),
         r_packages=("Seurat", "SingleR"),
         commands=("snakemake",),
@@ -280,10 +280,11 @@ def _check_capability(root: Path, capability: Capability) -> dict[str, Any]:
 
 
 def _env_paths(root: Path, capability: Capability) -> list[Path]:
-    primary = root / ".conda" / "envs" / capability.env_name
-    env_paths = [primary]
+    env_root = environment_root(root)
+    substitutions = {"root": root, "env": env_root, "external": external_root()}
+    env_paths = [env_root / capability.env_name]
     for env_path in capability.alternate_env_paths:
-        env_paths.append(Path(env_path.format(root=root)))
+        env_paths.append(Path(env_path.format(**substitutions)))
     return env_paths
 
 

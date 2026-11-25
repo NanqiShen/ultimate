@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ultimate.paths import project_root
+from ultimate.paths import environment_root, project_root
 
 import importlib.util
 import json
@@ -367,7 +367,7 @@ def _r_package_checks(packages: tuple[str, ...], config: dict[str, Any] | None =
         candidates.append(Path(shutil.which("Rscript") or "Rscript"))
     if config is not None:
         for env_name in _candidate_env_names(module_name):
-            rscript = Path((config.get("project") or {}).get("server_root") or project_root()) / ".conda" / "envs" / env_name / "bin" / "Rscript"
+            rscript = _env_root(config) / env_name / "bin" / "Rscript"
             if rscript.exists():
                 candidates.append(rscript)
     if not candidates:
@@ -393,8 +393,21 @@ def _r_package_checks(packages: tuple[str, ...], config: dict[str, Any] | None =
     return {pkg: "available" if pkg in installed else "missing_optional" for pkg in packages}
 
 
+def _env_root(config: dict[str, Any]) -> Path:
+    """Managed environment prefix root, honouring ``ULTIMATE_ENV_ROOT``.
+
+    A project that still keeps its environments inside the code root keeps
+    working: ``environment_root`` is only consulted when no explicit
+    ``server_root`` is configured.
+    """
+    server_root = (config.get("project") or {}).get("server_root")
+    if server_root:
+        return environment_root(Path(str(server_root)))
+    return environment_root()
+
+
 def _env_bin_roots(config: dict[str, Any]) -> list[Path]:
-    root = Path((config.get("project") or {}).get("server_root") or project_root())
+    root = _env_root(config)
     envs = [
         "ultimate-core",
         "ultimate-rnaseq",
@@ -415,7 +428,7 @@ def _env_bin_roots(config: dict[str, Any]) -> list[Path]:
         "ultimate-spatial-r",
         "ultimate-browser",
     ]
-    return [root / ".conda" / "envs" / env / "bin" for env in envs]
+    return [root / env / "bin" for env in envs]
 
 
 def _candidate_env_names(module_name: str | None) -> list[str]:
