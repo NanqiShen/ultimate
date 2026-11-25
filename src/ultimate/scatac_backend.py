@@ -690,7 +690,7 @@ def _run_dar_peak_matrix_backend(
     versions_path = tables_dir / "dar_backend_versions.tsv"
     volcano_path = figures_dir / "dar_volcano.png"
     heatmap_path = figures_dir / "dar_peak_heatmap.png"
-    object_path = tables_dir.parents[2] / "objects" / "scatac" / "dar_peak_matrix_backend.rds"
+    object_path = tables_dir.parents[2] / "objects" / "scatac" / "dar_peak_matrix_backend.json"
     artifacts = {
         "tables": {
             "differential_peaks": str(result_path),
@@ -1323,6 +1323,10 @@ def _write_chromvar_skip_outputs(
     for object_path in artifacts.get("objects", {}).values():
         object_file = Path(str(object_path))
         object_file.parent.mkdir(parents=True, exist_ok=True)
+        # Never write JSON into a .rds filename: an R saveRDS() object would be
+        # expected there. On skip, emit an honest JSON with a distinct suffix.
+        if object_file.suffix.lower() in {".rds", ".rdata"}:
+            object_file = object_file.with_name(object_file.stem + "_skip.json")
         object_file.write_text(
             json.dumps({"backend_id": backend_id, "status": "skipped", "reason": reason}, indent=2, ensure_ascii=False),
             encoding="utf-8",

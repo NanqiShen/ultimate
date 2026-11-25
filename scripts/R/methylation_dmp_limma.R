@@ -44,7 +44,7 @@ if (!condition %in% colnames(samples)) {
 }
 keep <- colnames(beta) %in% samples$sample_id
 beta <- beta[, keep, drop = FALSE]
-grp <- samples$condition[match(colnames(beta), samples$sample_id)]
+grp <- samples[[condition]][match(colnames(beta), samples$sample_id)]
 control_cols <- colnames(beta)[grp == control]
 case_cols <- colnames(beta)[grp == case]
 if (length(control_cols) < 2 || length(case_cols) < 2) {

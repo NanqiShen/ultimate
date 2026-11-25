@@ -130,7 +130,7 @@ def run_survival_analysis(
     if engine == "lifelines":
         return _run_lifelines(combined, label, figures_dir, tables_dir)
     if engine == "r_survival":
-        return _run_r_survival(combined, label, figures_dir, tables_dir)
+        return _run_r_survival(combined, label, figures_dir, tables_dir, module_name)
     figure = _write_skipped_figure(figures_dir, label, "no_survival_engine_lifelines_or_R")
     return SurvivalResult(status="skipped", reason="no_survival_engine_lifelines_or_R", figure_path=str(figure))
 
@@ -218,13 +218,13 @@ def _run_lifelines(combined: pd.DataFrame, label: str, figures_dir: Path, tables
     )
 
 
-def _run_r_survival(combined: pd.DataFrame, label: str, figures_dir: Path, tables_dir: Path) -> SurvivalResult:
+def _run_r_survival(combined: pd.DataFrame, label: str, figures_dir: Path, tables_dir: Path, module_name: str = "clinical_assoc") -> SurvivalResult:
     """Fallback to an R survival script when lifelines is unavailable."""
     script = resolve_packaged_asset("scripts", "R", "survival_backend.R")
     input_tsv = tables_dir / "survival_input.tsv"
     output_tsv = tables_dir / "survival_results.tsv"
     combined.rename(columns={SURVIVAL_COLUMN: "time", EVENT_COLUMN: "event"}).to_csv(input_tsv, sep="\t", index=False)
-    rscript = resolve_rscript("clinical_assoc")
+    rscript = resolve_rscript(module_name)
     figure = figures_dir / "km_curve.png"
     command = [
         str(rscript),
@@ -242,7 +242,16 @@ def _run_r_survival(combined: pd.DataFrame, label: str, figures_dir: Path, table
         completed = subprocess.run(command, check=True, text=True, capture_output=True, timeout=300)
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         return SurvivalResult(status="skipped", reason=f"r_survival_failed:{type(exc).__name__}", figure_path=str(_write_skipped_figure(figures_dir, label, "r_survival_failed")))
-    payload = json.loads(completed.stdout or "{}")
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except (json.JSONDecodeError, TypeError):
+        payload = {}
+    # R exits 0 even when it emits status=skipped (e.g. missing survival
+    # package). Never turn that into a ready result pointing at a missing plot.
+    if payload.get("status") != "ready" or not figure.is_file():
+        reason = str(payload.get("reason") or "r_survival_skipped")
+        skipped_figure = _write_skipped_figure(figures_dir, label, reason)
+        return SurvivalResult(status="skipped", reason=reason, figure_path=str(skipped_figure))
     return SurvivalResult(
         status="ready",
         logrank_p=payload.get("logrank_p"),

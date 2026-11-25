@@ -86,6 +86,81 @@ def test_survival_engine_absence_is_explicit_not_fabricated(tmp_path: Path, monk
     assert "no_survival_engine" in result.reason
 
 
+def _r_clinical() -> pd.DataFrame:
+    return pd.DataFrame({
+        "sample_id": ["S1", "S2", "S3", "S4", "S5", "S6"],
+        "survival_time": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        "event": [1, 1, 0, 1, 0, 1],
+    })
+
+
+def test_r_fallback_skipped_payload_is_not_reported_ready(tmp_path: Path, monkeypatch):
+    """R may exit 0 with status=skipped (missing R package) - must stay skipped."""
+    import subprocess
+
+    class _Completed:
+        stdout = '{"status":"skipped","reason":"missing_r_package:survival"}'
+
+    monkeypatch.setattr(survival_backend, "_available_engine", lambda module: "r_survival")
+    monkeypatch.setattr(survival_backend, "resolve_rscript", lambda module: Path("/tmp/Rscript"))
+    monkeypatch.setattr(survival_backend, "resolve_packaged_asset", lambda *parts: Path("/tmp/survival_backend.R"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Completed())
+
+    result = survival_backend.run_survival_analysis(
+        _r_clinical(), pd.Series([2, 2, 2, 0, 0, 0], index=[f"S{i}" for i in range(1, 7)]),
+        figures_dir=tmp_path / "fig", tables_dir=tmp_path / "tab", label="G",
+    )
+    assert result.status == "skipped"
+    assert "missing_r_package:survival" in result.reason
+    assert Path(result.figure_path).is_file()
+
+
+def test_r_fallback_missing_figure_is_not_reported_ready(tmp_path: Path, monkeypatch):
+    """Even a ready payload must not be accepted without the KM figure."""
+    import subprocess
+
+    class _Completed:
+        stdout = '{"status":"ready","logrank_p":0.01}'
+
+    monkeypatch.setattr(survival_backend, "_available_engine", lambda module: "r_survival")
+    monkeypatch.setattr(survival_backend, "resolve_rscript", lambda module: Path("/tmp/Rscript"))
+    monkeypatch.setattr(survival_backend, "resolve_packaged_asset", lambda *parts: Path("/tmp/survival_backend.R"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Completed())  # no png written
+
+    result = survival_backend.run_survival_analysis(
+        _r_clinical(), pd.Series([2, 2, 2, 0, 0, 0], index=[f"S{i}" for i in range(1, 7)]),
+        figures_dir=tmp_path / "fig", tables_dir=tmp_path / "tab", label="G",
+    )
+    assert result.status == "skipped"
+    assert "r_survival_skipped" in result.reason
+
+
+def test_r_fallback_uses_requested_module_name(tmp_path: Path, monkeypatch):
+    """The Rscript route must honour the caller's module, not a hardcoded one."""
+    seen: list[str] = []
+
+    def _fake_resolve(module: str):
+        seen.append(module)
+        return Path("/tmp/Rscript")
+
+    monkeypatch.setattr(survival_backend, "_available_engine", lambda module: "r_survival")
+    monkeypatch.setattr(survival_backend, "resolve_rscript", _fake_resolve)
+    monkeypatch.setattr(survival_backend, "resolve_packaged_asset", lambda *parts: Path("/tmp/survival_backend.R"))
+
+    import subprocess
+
+    class _Completed:
+        stdout = '{"status":"skipped","reason":"no_survival"}'
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Completed())
+    survival_backend.run_survival_analysis(
+        _r_clinical(), pd.Series([2, 2, 2, 0, 0, 0], index=[f"S{i}" for i in range(1, 7)]),
+        figures_dir=tmp_path / "fig", tables_dir=tmp_path / "tab", label="G",
+        module_name="publicdb",
+    )
+    assert seen == ["publicdb"]
+
+
 # --- 2. Welch t --------------------------------------------------------------
 
 
@@ -183,16 +258,75 @@ def test_customer_package_rewrites_image_paths_and_sanitizes(tmp_path: Path):
 
 
 def test_no_python_source_writes_json_into_rds_suffix():
-    offenders = []
+    """Detect writing JSON into a .rds/.RData target, including via a helper
+    parameter. Targets rewritten through ``with_name(.._skip.json)`` are honest.
+    """
+    import ast
+
+    offenders: list[str] = []
     for path in (REPO_ROOT / "src" / "ultimate").rglob("*.py"):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for number, line in enumerate(lines, 1):
-            if "write_text" not in line or "json" not in line:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        rds_literal_re = re.compile(r"\.(rds|rdata)(?:$|[^a-z])", re.IGNORECASE)
+
+        def bound_to_rds(name: str, scope: ast.AST) -> bool:
+            for node in ast.walk(scope):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == name:
+                            # Path may be a plain string or a BinOp like
+                            # ``objects_dir / "x.rds"``; inspect all string constants.
+                            for inner in ast.walk(node.value):
+                                if isinstance(inner, ast.Constant) and isinstance(inner.value, str) and rds_literal_re.search(inner.value):
+                                    return True
+            return False
+
+        def is_skip_rewrite(node: ast.Call) -> bool:
+            seg = ast.get_source_segment(source, node) or ""
+            # Check the statement (parent) for a with_name rewrite of the target.
+            return "with_name" in seg and "_skip.json" in seg
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            window = "\n".join(lines[max(0, number - 40):number])
-            if re.search(r'\.(rds|RData)"', window):
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{number}")
+            params = {arg.arg for arg in node.args.args} | {arg.arg for arg in node.args.kwonlyargs}
+            if node.args.kwarg:
+                params.add(node.args.kwarg.arg)
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Call):
+                    continue
+                fn = sub.func
+                cname = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+                if cname not in {"write_text", "write", "write_bytes"} or not isinstance(fn, ast.Attribute):
+                    continue
+                seg = ast.get_source_segment(source, sub) or ""
+                if not any(k in seg for k in ("json", "dumps", "payload", "manifest", "base")):
+                    continue
+                if is_skip_rewrite(sub):
+                    continue
+                target = ast.get_source_segment(source, fn.value) or ""
+                target_name = target.strip()
+                # 1) local assignment to a literal .rds path
+                if bound_to_rds(target_name, node):
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{sub.lineno}: local {target_name}")
+                    continue
+                # 2) helper parameter that receives a .rds path at any call site
+                if target_name in params:
+                    kw_target = f"{target_name}="
+                    for call in ast.walk(tree):
+                        if not isinstance(call, ast.Call):
+                            continue
+                        call_fn = call.func
+                        call_name = call_fn.attr if isinstance(call_fn, ast.Attribute) else getattr(call_fn, "id", "")
+                        if call_name != node.name:
+                            continue
+                        for kw in call.keywords:
+                            if kw.arg == target_name and isinstance(kw.value, ast.Name) and bound_to_rds(kw.value.id, tree):
+                                offenders.append(f"{path.relative_to(REPO_ROOT)}:{sub.lineno}: param {target_name}")
+                            elif kw.arg == target_name and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str) and rds_literal_re.search(kw.value.value):
+                                offenders.append(f"{path.relative_to(REPO_ROOT)}:{sub.lineno}: param literal {target_name}")
     assert offenders == []
+
 
 
 def test_real_r_scripts_still_write_rds_via_saverds():
@@ -206,3 +340,14 @@ def test_survival_r_script_is_packaged():
     from ultimate.env_router import resolve_packaged_asset
 
     assert resolve_packaged_asset("scripts", "R", "survival_backend.R").is_file()
+
+
+
+def test_r_limma_scripts_use_dynamic_condition_column():
+    """Custom --condition-column must actually drive grouping in both R scripts."""
+    r_dir = REPO_ROOT / "scripts" / "R"
+    for name in ("proteomics_limma_backend.R", "methylation_dmp_limma.R"):
+        text = (r_dir / name).read_text(encoding="utf-8")
+        assert "samples[[condition]]" in text, name
+        assert "samples$condition" not in text, name
+        assert 'condition %in% colnames(samples)' in text, name

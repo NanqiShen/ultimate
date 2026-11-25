@@ -243,7 +243,7 @@ def test_scatac_publication_preset_runs_dar_peak_matrix_outputs(tmp_path: Path) 
         "results/tables/scatac/dar_backend_versions.tsv",
         "results/figures/scatac/dar_volcano.png",
         "results/figures/scatac/dar_peak_heatmap.png",
-        "objects/scatac/dar_peak_matrix_backend.rds",
+        "objects/scatac/dar_peak_matrix_backend.json",
     ]:
         path = run_dir / relative
         assert path.exists() and path.stat().st_size > 0

@@ -816,9 +816,9 @@ def _write_objects(module_name: str, matrix: pd.DataFrame, stats: pd.DataFrame, 
         "top_features": stats.head(10)["feature_id"].tolist(),
     }
     json_path = objects_dir / "object_manifest.json"
-    rds_path = objects_dir / f"{module_name}_smoke_object.json"
-    rdata_path = objects_dir / f"{module_name}_workspace_summary.json"
+    python_object_path = objects_dir / f"{module_name}_smoke_object.json"
+    workspace_path = objects_dir / f"{module_name}_workspace_summary.json"
     json_path.write_text(json.dumps(object_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    rds_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
-    rdata_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
-    return {"manifest": str(json_path), "python_object": str(rds_path), "workspace_summary": str(rdata_path)}
+    python_object_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
+    workspace_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
+    return {"manifest": str(json_path), "python_object": str(python_object_path), "workspace_summary": str(workspace_path)}

@@ -45,7 +45,7 @@ if (!condition %in% colnames(samples)) {
 ids <- colnames(mat)
 keep <- ids %in% samples$sample_id
 mat <- mat[, keep, drop = FALSE]
-grp <- samples$condition[match(colnames(mat), samples$sample_id)]
+grp <- samples[[condition]][match(colnames(mat), samples$sample_id)]
 control_cols <- colnames(mat)[grp == control]
 case_cols <- colnames(mat)[grp == case]
 if (length(control_cols) < 2 || length(case_cols) < 2) {

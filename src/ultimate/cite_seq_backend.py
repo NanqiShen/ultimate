@@ -692,7 +692,10 @@ def _write_dsb_skip_outputs(
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     if not log_path.exists():
         log_path.write_text(f"DSB backend {status}: {reason}\n", encoding="utf-8")
-    object_path.write_text(json.dumps({"status": status, "reason": reason}, indent=2), encoding="utf-8")
+    # The .rds is reserved for the real R saveRDS() output; on skip write an
+    # honest JSON beside it instead of disguising JSON as an R object.
+    skip_object = object_path.with_name(object_path.stem + "_skip.json")
+    skip_object.write_text(json.dumps({"status": status, "reason": reason}, indent=2), encoding="utf-8")
     _write_dsb_skip_figure(figure_path, reason)
 
 
