@@ -344,6 +344,11 @@ def _scrna_input(config: dict[str, Any]) -> tuple[Path | None, str | None]:
     ]
     configured_type = str(module_cfg.get("input_type") or raw_cfg.get("input_type") or "").lower()
     generic = module_cfg.get("input_path") or raw_cfg.get("input_path")
+    samples_list = module_cfg.get("samples") or raw_cfg.get("samples")
+    if not generic and isinstance(samples_list, list) and samples_list:
+        first = samples_list[0]
+        if isinstance(first, dict) and first.get("input_path"):
+            generic = first.get("input_path")
     if generic:
         if configured_type in {"h5ad", "10x_h5", "10x_mtx"}:
             return Path(str(generic)), configured_type

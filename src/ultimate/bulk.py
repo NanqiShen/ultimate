@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import math
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,7 @@ class BulkInputs:
     clinical: pd.DataFrame
     source: str
     warnings: tuple[str, ...]
+    ingestion_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def is_bulk_module(module_name: str) -> bool:
@@ -266,8 +268,12 @@ def run_bulk_module(
             "r_entrypoint": module_cfg.get("r_entrypoint", f"scripts/R/{module_name}.R"),
             "status": "python_bulk_backend_complete_r_optional",
         },
-        "input_matrix": module_cfg.get("input_matrix"),
+        "input_matrix": module_cfg.get("input_matrix") or inputs.source,
         "input_source": inputs.source,
+        "input_checksum": inputs.ingestion_evidence.get("input_sha256", ""),
+        "input_checksums": inputs.ingestion_evidence.get("files", {}),
+        "raw_dimensions": inputs.ingestion_evidence.get("raw_dimensions", {"n_features": int(matrix.shape[0]), "n_samples": int(matrix.shape[1])}),
+        "ingestion_evidence": inputs.ingestion_evidence,
         "n_features": int(matrix.shape[0]),
         "n_samples": int(matrix.shape[1]),
         "n_clinical_rows": int(inputs.clinical.shape[0]),
@@ -365,9 +371,42 @@ def _load_bulk_inputs(module_name: str, module_cfg: dict[str, Any], samples: pd.
         ((module_cfg.get("raw") or {}).get("output_matrix")),
         module_cfg.get("matrix_path"),
     )
+    ingestion_evidence: dict[str, Any] = {}
     if matrix_path is not None:
         matrix = _read_matrix(matrix_path)
         source = str(matrix_path)
+        raw_p = Path(matrix_path).resolve()
+        raw_features = int(matrix.shape[0])
+        raw_samples = int(matrix.shape[1])
+        h = hashlib.sha256()
+        with raw_p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        mat_sha = h.hexdigest()
+        ingestion_evidence = {
+            "module": module_name,
+            "route": "salmon" if "salmon" in str(raw_p).lower() or "counts_raw" in str(raw_p).lower() else "bulk",
+            "input_matrix": str(raw_p),
+            "input_path": str(raw_p),
+            "input_sha256": mat_sha,
+            "input_checksum": mat_sha,
+            "raw_dimensions": {"n_features": raw_features, "n_samples": raw_samples},
+            "n_features": raw_features,
+            "n_samples": raw_samples,
+            "samples": [str(c) for c in matrix.columns],
+            "files": {
+                str(raw_p): mat_sha,
+                raw_p.name: mat_sha,
+            },
+            "file_records": [
+                {
+                    "role": "counts_matrix",
+                    "path": str(raw_p),
+                    "name": raw_p.name,
+                    "sha256": mat_sha,
+                }
+            ],
+        }
     else:
         matrix = _demo_matrix(module_name, samples)
         source = "demo_generated_matrix"
@@ -381,7 +420,7 @@ def _load_bulk_inputs(module_name: str, module_cfg: dict[str, Any], samples: pd.
         if module_name in {"publicdb", "single_gene", "clinical_assoc"}:
             warnings.append("clinical_table_missing_sample_metadata_used")
     matrix = _align_matrix_to_samples(matrix, samples)
-    return BulkInputs(matrix=matrix, clinical=clinical, source=source, warnings=tuple(warnings))
+    return BulkInputs(matrix=matrix, clinical=clinical, source=source, warnings=tuple(warnings), ingestion_evidence=ingestion_evidence)
 
 
 def _first_existing_path(*values: Any) -> Path | None:

@@ -46,7 +46,7 @@ fi
 FASTQ_DIR="${FASTQ_DIR:-$(dirname -- "$SAMPLESHEET")}"
 mkdir -p "$OUT_DIR"/{logs,star,tables}
 
-if [[ "$(head -1 "$SAMPLESHEET")" != $'sample_id\tfastq_1\tfastq_2\tstrandedness' ]]; then
+if [[ "$(head -1 "$SAMPLESHEET")" != $'sample_id\tfastq_1\tfastq_2\tstrandedness'* ]]; then
   echo "[upstream_scrna] SAMPLESHEET is not the normalised table: $SAMPLESHEET" >&2
   echo "Regenerate the package with: ultimate prepare-upstream ..." >&2
   exit 2

@@ -68,7 +68,7 @@ fi
 # SAMPLESHEET is the normalised table produced by `ultimate prepare-upstream`
 # (columns: sample_id / fastq_1 / fastq_2 / strandedness). The validator and this
 # job therefore consume the identical file; no re-parsing of raw column order.
-if [[ "$(head -1 "$SAMPLESHEET")" != $'sample_id\tfastq_1\tfastq_2\tstrandedness' ]]; then
+if [[ "$(head -1 "$SAMPLESHEET")" != $'sample_id\tfastq_1\tfastq_2\tstrandedness'* ]]; then
   echo "[upstream_bulk] SAMPLESHEET is not the normalised table: $SAMPLESHEET" >&2
   echo "Regenerate the package with: ultimate prepare-upstream ..." >&2
   exit 2

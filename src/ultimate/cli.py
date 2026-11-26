@@ -333,25 +333,33 @@ def check_upstream_acceptance_command(
         if route == "salmon":
             matrix = artifacts_dir / "counts_raw.tsv"
             check_expected_files(acceptance, "upstream", [matrix, artifacts_dir / "import_config.yaml"])
+            exp_dims = None
             if matrix.is_file() and normalized.is_file():
                 expected_samples = check_sample_count_agreement(acceptance, "upstream", matrix, normalized)
-                check_matrix_contract(acceptance, "upstream", matrix, expected_samples=expected_samples)
+                matrix_info = check_matrix_contract(acceptance, "upstream", matrix, expected_samples=expected_samples)
                 check_salmon_quant_reconciliation(acceptance, "upstream", matrix, artifacts_dir, expected_samples)
+                if matrix_info.get("features") and expected_samples:
+                    exp_dims = {"n_features": int(matrix_info["features"]), "n_samples": len(expected_samples)}
             check_downstream_consumed(
                 acceptance, "downstream", downstream_manifest,
                 expected_inputs=matrix if matrix.is_file() else artifacts_dir,
+                expected_dimensions=exp_dims,
             )
         elif route == "starsolo":
             samples = pd.read_csv(normalized, sep="\t")["sample_id"].astype(str).tolist() if normalized.is_file() else []
             expected_sample_dirs: list[Path] = []
+            star_dims = None
             for sample in samples:
                 s_dir = artifacts_dir / "star" / sample / "filtered"
                 expected_sample_dirs.append(s_dir)
-                check_10x_directory(acceptance, f"upstream:{sample}", s_dir)
+                d_info = check_10x_directory(acceptance, f"upstream:{sample}", s_dir)
+                if d_info.get("shape") and not star_dims:
+                    star_dims = {"n_genes": d_info["shape"][0], "n_cells": d_info["shape"][1]}
 
             check_downstream_consumed(
                 acceptance, "downstream", downstream_manifest,
                 expected_inputs=expected_sample_dirs if expected_sample_dirs else artifacts_dir,
+                expected_dimensions=star_dims,
             )
         else:
             acceptance.add("route_supported", "fail", f"unsupported route: {route}")

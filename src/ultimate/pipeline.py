@@ -126,11 +126,37 @@ def _run_pipeline(
     figure_qc = generate_run_figure_qc(out_dir, style=active_style)
     advanced_backend_execution = _write_advanced_backend_execution(out_dir, module_manifests)
     run_level_fields = _aggregate_run_level_fields(module_manifests, delivery_gate)
+    primary_input_matrix = next((str(mod.get("input_matrix")) for mod in module_manifests if isinstance(mod, dict) and mod.get("input_matrix")), "")
+    primary_input_path = next((str(mod.get("input_path")) for mod in module_manifests if isinstance(mod, dict) and mod.get("input_path")), "")
+    primary_checksum = next((str(mod.get("input_checksum")) for mod in module_manifests if isinstance(mod, dict) and mod.get("input_checksum")), "")
+    primary_raw_dims = next((mod.get("raw_dimensions") for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("raw_dimensions"), dict)), None)
+    n_features = next((int(mod["n_features"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_features"), int)), None)
+    n_samples = next((int(mod["n_samples"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_samples"), int)), None)
+    n_genes = next((int(mod["n_genes"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_genes"), int)), None)
+    n_cells = next((int(mod["n_cells"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_cells"), int)), None)
+    all_checksums = {}
+    for mod in module_manifests:
+        if isinstance(mod, dict) and isinstance(mod.get("input_checksums"), dict):
+            all_checksums.update(mod["input_checksums"])
+    pipeline_ingestion = {
+        str(mod.get("module") or f"mod_{i}"): mod.get("ingestion_evidence")
+        for i, mod in enumerate(module_manifests) if isinstance(mod, dict) and mod.get("ingestion_evidence")
+    }
     manifest = {
         "run_id": run_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": run_summary["status"],
         **run_level_fields,
+        "input_matrix": primary_input_matrix,
+        "input_path": primary_input_path,
+        "input_checksum": primary_checksum,
+        "input_checksums": all_checksums,
+        "n_features": n_features,
+        "n_samples": n_samples,
+        "n_genes": n_genes,
+        "n_cells": n_cells,
+        "raw_dimensions": primary_raw_dims,
+        "ingestion_evidence": pipeline_ingestion,
         "project": config.get("project", {}),
         "analysis_request": analysis_request,
         "output_dir": str(out_dir),

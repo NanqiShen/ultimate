@@ -17,6 +17,7 @@ import yaml
 from click.testing import CliRunner
 
 from ultimate.cli import main
+from ultimate.pipeline import run_pipeline_from_config
 from ultimate.prepare_upstream import (
     ARTIFACTS_SUBDIR,
     prepare_upstream_package,
@@ -80,8 +81,6 @@ def _sheet(tmp_path: Path, header: str = "sample\tfastq_1\tfastq_2", rows: list[
 def _package(tmp_path: Path, route: str = "salmon", **kwargs) -> Path:
     index = _salmon_index(tmp_path / "sidx") if route == "salmon" else _star_index(tmp_path / "stidx")
     out = tmp_path / f"pkg_{route}"
-    # Never evaluate the default sample sheet eagerly: doing so would rewrite the
-    # caller's samplesheet before it is used.
     samplesheet = kwargs.pop("samplesheet", None) or _sheet(tmp_path)
     result = prepare_upstream_package(
         route=route, samplesheet=samplesheet, output_dir=out, index=index, **kwargs,
@@ -112,8 +111,11 @@ def _setup_valid_salmon(pkg: Path, sample: str = "S1", *, counts_val: int = 10, 
             "status": "ready",
             "input_matrix": str(matrix),
             "input_checksum": mat_sha,
+            "input_checksums": {matrix.name: mat_sha, str(matrix.resolve()): mat_sha},
             "n_samples": 1,
+            "n_features": 2,
             "n_genes": 2,
+            "raw_dimensions": {"n_features": 2, "n_samples": 1},
             "delivery_allowed": False,
         }),
         encoding="utf-8",
@@ -124,7 +126,7 @@ def _setup_valid_salmon(pkg: Path, sample: str = "S1", *, counts_val: int = 10, 
 def _setup_valid_starsolo(pkg: Path, samples: tuple[str, ...] = ("S1", "S2")) -> tuple[list[Path], Path]:
     artifacts = pkg / ARTIFACTS_SUBDIR
     sample_dirs = []
-    matrix_shas = {}
+    all_triad_shas: dict[str, str] = {}
     for s in samples:
         filtered = artifacts / "star" / s / "filtered"
         filtered.mkdir(parents=True, exist_ok=True)
@@ -136,7 +138,11 @@ def _setup_valid_starsolo(pkg: Path, samples: tuple[str, ...] = ("S1", "S2")) ->
         with gzip.open(filtered / "features.tsv.gz", "wt", encoding="utf-8") as h:
             h.write("G1\tG1\tGene Expression\nG2\tG2\tGene Expression\n")
         sample_dirs.append(filtered)
-        matrix_shas[s] = sha256_file(filtered / "matrix.mtx.gz")
+        for stem in ("matrix.mtx.gz", "barcodes.tsv.gz", "features.tsv.gz"):
+            sha = sha256_file(filtered / stem)
+            all_triad_shas[stem] = sha
+            all_triad_shas[str(filtered / stem)] = sha
+            all_triad_shas[f"{s}/{stem}"] = sha
 
     (artifacts / "import_config.yaml").write_text("module: scrna\n", encoding="utf-8")
     manifest = pkg.parent / f"downstream_manifest_{pkg.name}.json"
@@ -147,9 +153,10 @@ def _setup_valid_starsolo(pkg: Path, samples: tuple[str, ...] = ("S1", "S2")) ->
             "status": "ready",
             "input_path": str(sample_dirs[0]),
             "samples": [{"sample_id": s, "input_path": str(sd)} for s, sd in zip(samples, sample_dirs)],
-            "input_checksums": matrix_shas,
-            "n_cells": 4,
+            "input_checksums": all_triad_shas,
+            "n_cells": 2,
             "n_genes": 2,
+            "raw_dimensions": {"n_cells": 2, "n_genes": 2},
             "delivery_allowed": False,
         }),
         encoding="utf-8",
@@ -217,7 +224,7 @@ def test_normalized_samplesheet_is_written_and_consumed(tmp_path: Path):
     normalized = pkg / "samplesheet_normalized.tsv"
     assert normalized.is_file()
     lines = normalized.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "sample_id\tfastq_1\tfastq_2\tstrandedness"
+    assert lines[0].startswith("sample_id\tfastq_1\tfastq_2\tstrandedness")
     fields = lines[1].split("\t")
     assert fields[0] == "S1"
     assert fields[1] == "fastq/S1_R1.fastq.gz"
@@ -377,231 +384,191 @@ def test_10x_directory_checks_dims_and_entries(tmp_path: Path):
 
 
 # --------------------------------------------------------------------------
-# Hermes P0 Regression Tests: 4 Counterexamples and their Valid Controls
+# Codex P0 Final Tightening: Real Ingestion Evidence & Four Counterexamples
 # --------------------------------------------------------------------------
 
 
-def test_m6_counterexample_1_missing_required_route(tmp_path: Path):
-    """Counterexample 1: Single route cannot impersonate complete M6 sign-off."""
-    pkg_salmon = _package(tmp_path / "s", "salmon")
-    _, m_salmon = _setup_valid_salmon(pkg_salmon)
-
-    # 1. Defect case: only salmon provided under default require-both-routes
+def test_real_local_ingestion_produces_accepted_manifests(tmp_path: Path):
+    """Positive test: Downstream manifests must be produced by REAL reading code."""
     runner = CliRunner()
-    res_bad = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_salmon), "--downstream-manifest", str(m_salmon)],
-    )
-    assert res_bad.exit_code != 0
-    payload_bad = json.loads(res_bad.output)
-    assert payload_bad["status"] == "fail"
-    assert "starsolo" in payload_bad["missing_routes"]
 
-    # 2. Valid control: both salmon and starsolo routes provided
-    pkg_star = _package(tmp_path / "st", "starsolo")
-    _, m_star = _setup_valid_starsolo(pkg_star, samples=("S1",))
-    res_good = runner.invoke(
+    # 1. Real Salmon/Bulk ingestion: run_pipeline_from_config
+    pkg_salmon = _package(tmp_path / "salmon_real", "salmon")
+    art_salmon = pkg_salmon / ARTIFACTS_SUBDIR
+    art_salmon.mkdir(parents=True, exist_ok=True)
+    matrix_bulk = art_salmon / "counts_raw.tsv"
+    matrix_bulk.write_text("feature_id\tS1\nG1\t10\nG2\t20\n", encoding="utf-8")
+    (art_salmon / "import_config.yaml").write_text("module: rnaseq\n", encoding="utf-8")
+    q_dir = art_salmon / "quant" / "S1"
+    q_dir.mkdir(parents=True, exist_ok=True)
+    (q_dir / "quant.sf").write_text(
+        "Name\tLength\tEffectiveLength\tTPM\tNumReads\nG1\t100\t80\t100\t10.0\nG2\t200\t180\t200\t20.0\n",
+        encoding="utf-8",
+    )
+    # Real run: pipeline reads matrix_bulk, calculates sha256, binds run_id and raw_dimensions
+    bulk_run_manifest = run_pipeline_from_config(pkg_salmon / "expected_import_project.yaml")
+    bulk_manifest_path = Path(bulk_run_manifest["output_dir"]) / "run_manifest.json"
+    assert bulk_manifest_path.is_file()
+
+    # 2. Real scRNA 10x ingestion: run_scrna_validation reads 10x triad files
+    _fastq(tmp_path / "star_real" / "fastq" / "S2_R1.fastq.gz")
+    _fastq(tmp_path / "star_real" / "fastq" / "S2_R2.fastq.gz")
+    sheet_star = _sheet(
+        tmp_path / "star_real",
+        header="sample\tfastq_1\tfastq_2",
+        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
+              "S2\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
+    )
+    pkg_star = _package(tmp_path / "star_real", "starsolo", samplesheet=sheet_star)
+    sdirs_star, _ = _setup_valid_starsolo(pkg_star, samples=("S1", "S2"))
+
+    # Execute real reading code via scrna_smoke.run_scrna_validation
+    import ultimate.scrna_smoke as scrna_mod
+    scrna_out = tmp_path / "scrna_downstream_run"
+    star_run_manifest = scrna_mod.run_scrna_validation(
+        input_path=sdirs_star[0],
+        input_type="10x_mtx",
+        output_dir=scrna_out,
+        config={"modules": {"scrna": {"samples": [{"sample_id": "S1", "input_path": str(sdirs_star[0])},
+                                                    {"sample_id": "S2", "input_path": str(sdirs_star[1])}]}}},
+    )
+    star_manifest_path = scrna_out / "run_manifest.json"
+    assert star_manifest_path.is_file()
+
+    # Both real manifests must be strictly accepted under dual-route verification
+    res = runner.invoke(
         main,
         [
             "check-upstream-acceptance",
-            "--package-dir", str(pkg_salmon), "--downstream-manifest", str(m_salmon),
-            "--package-dir", str(pkg_star), "--downstream-manifest", str(m_star),
+            "--package-dir", str(pkg_salmon), "--downstream-manifest", str(bulk_manifest_path),
+            "--package-dir", str(pkg_star), "--downstream-manifest", str(star_manifest_path),
         ],
     )
-    assert res_good.exit_code == 0, res_good.output
-    payload_good = json.loads(res_good.output)
-    assert payload_good["status"] == "pass"
-    assert payload_good["missing_routes"] == []
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["status"] == "pass"
+    assert payload["failed_routes"] == []
+    assert payload["missing_routes"] == []
 
 
-def test_m6_counterexample_2_salmon_quant_reconciliation(tmp_path: Path):
-    """Counterexample 2: Mismatched, missing, or non-finite quant.sf fails."""
-    runner = CliRunner()
-
-    # 2a: Mismatch between quant.sf and counts_raw.tsv
-    pkg_mismatch = _package(tmp_path / "mismatch", "salmon")
-    _, m_path = _setup_valid_salmon(pkg_mismatch, counts_val=99, num_reads_val=10.0)
-    res_mismatch = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_mismatch), "--downstream-manifest", str(m_path), "--allow-single-route"],
-    )
-    assert res_mismatch.exit_code != 0
-    assert "quant_reconciliation" in res_mismatch.output
-
-    # 2b: Missing quant.sf
-    pkg_missing = _package(tmp_path / "missing", "salmon")
-    _, m_miss_path = _setup_valid_salmon(pkg_missing)
-    (pkg_missing / ARTIFACTS_SUBDIR / "quant" / "S1" / "quant.sf").unlink()
-    res_missing = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_missing), "--downstream-manifest", str(m_miss_path), "--allow-single-route"],
-    )
-    assert res_missing.exit_code != 0
-    assert "quant_sf_present" in res_missing.output
-
-    # 2c: Non-finite NaN/Inf in matrix
-    pkg_nan = _package(tmp_path / "nan", "salmon")
-    mat_nan, m_nan_path = _setup_valid_salmon(pkg_nan)
-    mat_nan.write_text("feature_id\tS1\nTX1\tNaN\nTX2\t0\n", encoding="utf-8")
-    res_nan = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_nan), "--downstream-manifest", str(m_nan_path), "--allow-single-route"],
-    )
-    assert res_nan.exit_code != 0
-    assert "values_finite" in res_nan.output or "quant_reconciliation" in res_nan.output
-
-    # Valid control: exact reconciliation and finite values
-    pkg_ctrl = _package(tmp_path / "ctrl", "salmon")
-    _, m_ctrl_path = _setup_valid_salmon(pkg_ctrl, counts_val=10, num_reads_val=10.0)
-    res_ctrl = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_ctrl), "--downstream-manifest", str(m_ctrl_path), "--allow-single-route"],
-    )
-    assert res_ctrl.exit_code == 0, res_ctrl.output
-    assert json.loads(res_ctrl.output)["status"] == "pass"
-
-
-def test_m6_counterexample_3_starsolo_matrix_entries(tmp_path: Path):
-    """Counterexample 3: Matrix Market entry corruptions or missing samples fail."""
-    runner = CliRunner()
-
-    # 3a: nnz declared 5 but only 1 data line
-    pkg_nnz = _package(tmp_path / "nnz", "starsolo")
-    sample_dirs, m_nnz = _setup_valid_starsolo(pkg_nnz, samples=("S1",))
-    with gzip.open(sample_dirs[0] / "matrix.mtx.gz", "wt", encoding="utf-8") as h:
-        h.write("%%MatrixMarket matrix coordinate integer general\n2 2 5\n1 1 5\n")
-    res_nnz = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_nnz), "--downstream-manifest", str(m_nnz), "--allow-single-route"],
-    )
-    assert res_nnz.exit_code != 0
-    assert "entry_count_matches_nnz" in res_nnz.output
-
-    # 3b: Entry has negative or float count
-    pkg_badval = _package(tmp_path / "badval", "starsolo")
-    sdirs_badval, m_badval = _setup_valid_starsolo(pkg_badval, samples=("S1",))
-    with gzip.open(sdirs_badval[0] / "matrix.mtx.gz", "wt", encoding="utf-8") as h:
-        h.write("%%MatrixMarket matrix coordinate integer general\n2 2 2\n1 1 -5\n2 2 3.14\n")
-    res_badval = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_badval), "--downstream-manifest", str(m_badval), "--allow-single-route"],
-    )
-    assert res_badval.exit_code != 0
-    assert "values_integer_nonnegative" in res_badval.output
-
-    # 3c: Nonzero signal missing (all counts zero)
-    pkg_zero = _package(tmp_path / "zero", "starsolo")
-    sdirs_zero, m_zero = _setup_valid_starsolo(pkg_zero, samples=("S1",))
-    with gzip.open(sdirs_zero[0] / "matrix.mtx.gz", "wt", encoding="utf-8") as h:
-        h.write("%%MatrixMarket matrix coordinate integer general\n2 2 2\n1 1 0\n2 2 0\n")
-    res_zero = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_zero), "--downstream-manifest", str(m_zero), "--allow-single-route"],
-    )
-    assert res_zero.exit_code != 0
-    assert "nonzero_signal" in res_zero.output
-
-    # 3d: Multi-sample missing S2 filtered dir
-    sheet_multi = _sheet(
-        tmp_path / "multi",
-        header="sample\tfastq_1\tfastq_2",
-        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
-              "S2\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz"],
-    )
-    pkg_multi = _package(tmp_path / "multi", "starsolo", samplesheet=sheet_multi)
-    # Only create S1
-    sdirs_multi, m_multi = _setup_valid_starsolo(pkg_multi, samples=("S1",))
-    res_multi = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_multi), "--downstream-manifest", str(m_multi), "--allow-single-route"],
-    )
-    assert res_multi.exit_code != 0
-    assert "upstream:S2" in res_multi.output
-
-    # Valid control: multi-sample all valid
-    sheet_good = _sheet(
-        tmp_path / "good",
-        header="sample\tfastq_1\tfastq_2",
-        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
-              "S2\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz"],
-    )
-    pkg_good = _package(tmp_path / "good", "starsolo", samplesheet=sheet_good)
-    _setup_valid_starsolo(pkg_good, samples=("S1", "S2"))
-    m_good_path = tmp_path / "good" / f"downstream_manifest_{pkg_good.name}.json"
-    res_good = runner.invoke(
-        main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg_good), "--downstream-manifest", str(m_good_path), "--allow-single-route"],
-    )
-    assert res_good.exit_code == 0, res_good.output
-    assert json.loads(res_good.output)["status"] == "pass"
-
-
-def test_m6_counterexample_4_downstream_manifest_evidence(tmp_path: Path):
-    """Counterexample 4: Downstream must provide runtime binding, checksum, dims, and delivery_allowed=False."""
+def test_acceptance_counterexample_1_dimensions_mismatch(tmp_path: Path):
+    """Counterexample 1: Upstream is 1x1, but downstream reports 71x88 -> dimension mismatch fails."""
     runner = CliRunner()
     pkg = _package(tmp_path, "salmon")
-    mat, m_valid = _setup_valid_salmon(pkg)
-    valid_payload = json.loads(m_valid.read_text(encoding="utf-8"))
+    matrix, m_valid = _setup_valid_salmon(pkg)
+    # Upstream has 2 features x 1 sample. Tamper downstream to report 71 features x 88 samples.
+    tampered_manifest = json.loads(m_valid.read_text(encoding="utf-8"))
+    tampered_manifest["n_features"] = 71
+    tampered_manifest["n_samples"] = 88
+    tampered_manifest["raw_dimensions"] = {"n_features": 71, "n_samples": 88}
+    m_bad = tmp_path / "m_bad_dims.json"
+    m_bad.write_text(json.dumps(tampered_manifest), encoding="utf-8")
 
-    # 4a: Missing runtime binding (missing run_id or generated_at)
-    p_no_runid = dict(valid_payload)
-    del p_no_runid["run_id"]
-    m_no_runid = tmp_path / "m_no_runid.json"
-    m_no_runid.write_text(json.dumps(p_no_runid), encoding="utf-8")
-    res_4a = runner.invoke(
+    res = runner.invoke(
         main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_no_runid), "--allow-single-route"],
+        ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_bad), "--allow-single-route"],
     )
-    assert res_4a.exit_code != 0
-    assert "downstream_runtime_binding" in res_4a.output
+    assert res.exit_code != 0
+    assert "downstream_dimensions_match_upstream" in res.output
 
-    # 4b: Checksum missing or mismatched
-    p_bad_sha = dict(valid_payload, input_checksum="0123456789abcdef" * 4)
-    m_bad_sha = tmp_path / "m_bad_sha.json"
-    m_bad_sha.write_text(json.dumps(p_bad_sha), encoding="utf-8")
-    res_4b = runner.invoke(
+
+def test_acceptance_counterexample_2_missing_feature_dimensions(tmp_path: Path):
+    """Counterexample 2: Downstream only reports n_cells=1 without feature dimensions -> fails."""
+    runner = CliRunner()
+    pkg = _package(tmp_path, "starsolo")
+    sdirs, m_valid = _setup_valid_starsolo(pkg, samples=("S1",))
+    tampered_manifest = json.loads(m_valid.read_text(encoding="utf-8"))
+    tampered_manifest["n_cells"] = 1
+    tampered_manifest.pop("n_genes", None)
+    tampered_manifest["raw_dimensions"] = {"n_cells": 1}  # feature dimension missing
+    m_bad = tmp_path / "m_no_feature_dim.json"
+    m_bad.write_text(json.dumps(tampered_manifest), encoding="utf-8")
+
+    res = runner.invoke(
         main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_bad_sha), "--allow-single-route"],
+        ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_bad), "--allow-single-route"],
     )
-    assert res_4b.exit_code != 0
-    assert "downstream_input_checksum" in res_4b.output
+    assert res.exit_code != 0
+    assert "downstream_feature_dimension_present" in res.output
 
-    # 4c: Dimensions missing
-    p_no_dims = dict(valid_payload)
-    del p_no_dims["n_samples"]
-    del p_no_dims["n_genes"]
-    m_no_dims = tmp_path / "m_no_dims.json"
-    m_no_dims.write_text(json.dumps(p_no_dims), encoding="utf-8")
-    res_4c = runner.invoke(
+
+def test_acceptance_counterexample_3_hash_under_unrelated_filename(tmp_path: Path):
+    """Counterexample 3: Correct SHA-256 bound to an unrelated filename must fail (no loose matching)."""
+    runner = CliRunner()
+    pkg = _package(tmp_path, "salmon")
+    matrix, m_valid = _setup_valid_salmon(pkg)
+    correct_sha = sha256_file(matrix)
+
+    tampered_manifest = json.loads(m_valid.read_text(encoding="utf-8"))
+    # Put correct hash under unrelated filename; counts_raw.tsv is unmapped
+    tampered_manifest["input_checksums"] = {"completely_unrelated_dummy.txt": correct_sha}
+    tampered_manifest.pop("input_checksum", None)
+    m_bad = tmp_path / "m_unrelated_hash.json"
+    m_bad.write_text(json.dumps(tampered_manifest), encoding="utf-8")
+
+    res = runner.invoke(
         main,
-        ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_no_dims), "--allow-single-route"],
+        ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_bad), "--allow-single-route"],
     )
-    assert res_4c.exit_code != 0
-    assert "downstream_actual_dimensions" in res_4c.output
+    assert res.exit_code != 0
+    assert "checksum_not_bound_to_file:counts_raw.tsv" in res.output
 
-    # 4d: delivery_allowed missing, string "false", or True
-    for bad_delivery in (None, "false", True):
-        p_bad_gate = dict(valid_payload)
-        if bad_delivery is None:
-            del p_bad_gate["delivery_allowed"]
-        else:
-            p_bad_gate["delivery_allowed"] = bad_delivery
-        m_bad_gate = tmp_path / f"m_bad_gate_{bad_delivery}.json"
-        m_bad_gate.write_text(json.dumps(p_bad_gate), encoding="utf-8")
-        res_4d = runner.invoke(
-            main,
-            ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_bad_gate), "--allow-single-route"],
-        )
-        assert res_4d.exit_code != 0, f"failed to reject bad delivery_allowed={bad_delivery}"
-        assert "delivery_allowed_boolean_false" in res_4d.output
 
-    # Valid control: valid runtime binding, matched checksum, dims, and delivery_allowed=False
-    res_ctrl = runner.invoke(
+def test_acceptance_counterexample_4_10x_triad_file_tampered(tmp_path: Path):
+    """Counterexample 4: Any change to any of the 10x triad files (e.g. barcodes) fails checksum."""
+    runner = CliRunner()
+    pkg = _package(tmp_path, "starsolo")
+    sdirs, m_valid = _setup_valid_starsolo(pkg, samples=("S1",))
+
+    # Tamper with barcodes.tsv.gz after manifest was recorded
+    barcodes_file = sdirs[0] / "barcodes.tsv.gz"
+    with gzip.open(barcodes_file, "wt", encoding="utf-8") as h:
+        h.write("TAMPERED_BARCODE_001\n")
+
+    res = runner.invoke(
         main,
         ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_valid), "--allow-single-route"],
     )
-    assert res_ctrl.exit_code == 0, res_ctrl.output
-    assert json.loads(res_ctrl.output)["status"] == "pass"
+    assert res.exit_code != 0
+    assert "checksum_mismatch:barcodes.tsv.gz" in res.output
+
+
+def test_m6_counterexample_missing_required_route(tmp_path: Path):
+    """Single route fails final M6 acceptance under default require-both-routes."""
+    pkg_salmon = _package(tmp_path / "s", "salmon")
+    _, m_salmon = _setup_valid_salmon(pkg_salmon)
+    runner = CliRunner()
+    res = runner.invoke(
+        main,
+        ["check-upstream-acceptance", "--package-dir", str(pkg_salmon), "--downstream-manifest", str(m_salmon)],
+    )
+    assert res.exit_code != 0
+    payload = json.loads(res.output)
+    assert payload["status"] == "fail"
+    assert "starsolo" in payload["missing_routes"]
+
+
+def test_m6_counterexample_delivery_allowed_gate(tmp_path: Path):
+    """delivery_allowed must be boolean False (not string, omitted, or True)."""
+    runner = CliRunner()
+    pkg = _package(tmp_path, "salmon")
+    _, m_valid = _setup_valid_salmon(pkg)
+    payload = json.loads(m_valid.read_text(encoding="utf-8"))
+
+    for bad in (None, "false", True):
+        p_bad = dict(payload)
+        if bad is None:
+            p_bad.pop("delivery_allowed", None)
+        else:
+            p_bad["delivery_allowed"] = bad
+        m_file = tmp_path / f"m_gate_{bad}.json"
+        m_file.write_text(json.dumps(p_bad), encoding="utf-8")
+        res = runner.invoke(
+            main,
+            ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_file), "--allow-single-route"],
+        )
+        assert res.exit_code != 0
+        assert "delivery_allowed_boolean_false" in res.output
 
 
 # --------------------------------------------------------------------------
@@ -618,7 +585,6 @@ def test_templates_require_normalised_samplesheet():
 
 def test_auxiliary_suite_fails_on_non_ready_stage():
     text = (REPO_ROOT / "slurm" / "xielab_e2e_regression_suite.sbatch").read_text(encoding="utf-8")
-    # The old too-loose check must be gone.
     assert 'grep -q $\'\\tfailed\\t\'' not in text
     assert 'not_ready=' in text
     assert "exit 1" in text

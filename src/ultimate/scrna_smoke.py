@@ -118,7 +118,78 @@ def run_scrna_validation(
         is_stub=False,
         public_dataset=public_dataset,
     )
-    sc = _scanpy()
+    try:
+        sc = _scanpy()
+    except RuntimeError:
+        sc = None
+
+    if sc is None:
+        if input_type != "10x_mtx":
+            raise RuntimeError("scanpy is required for non-10x_mtx single-cell inputs; run in ultimate-scrna environment")
+        triad_checksums, triad_records = _collect_10x_triad_evidence(input_path, config)
+
+        def _read_nonempty_lines(p: Path) -> list[str]:
+            opener = gzip.open if p.suffix == ".gz" else open
+            with opener(p, "rt", encoding="utf-8", errors="ignore") as h:
+                return [line.strip() for line in h if line.strip()]
+
+        barcodes_file = next((input_path / f"barcodes.tsv{ext}" for ext in (".gz", "") if (input_path / f"barcodes.tsv{ext}").is_file()), None)
+        features_file = next((input_path / f"features.tsv{ext}" for ext in (".gz", "") if (input_path / f"features.tsv{ext}").is_file()), None)
+        matrix_file = next((input_path / f"matrix.mtx{ext}" for ext in (".gz", "") if (input_path / f"matrix.mtx{ext}").is_file()), None)
+        if not (barcodes_file and features_file and matrix_file):
+            raise FileNotFoundError(f"Missing 10x files in {input_path}")
+
+        n_input_cells = len(_read_nonempty_lines(barcodes_file))
+        n_input_genes = len(_read_nonempty_lines(features_file))
+        scrna_ingestion_evidence = {
+            "module": "scrna",
+            "route": "starsolo" if "star" in str(input_path).lower() else "10x_mtx",
+            "input_path": str(input_path.resolve()),
+            "raw_dimensions": {"n_cells": n_input_cells, "n_genes": n_input_genes},
+            "n_cells": n_input_cells,
+            "n_genes": n_input_genes,
+            "files": triad_checksums,
+            "file_records": triad_records,
+        }
+        samples_cfg = []
+        if isinstance(config, dict):
+            modules = config.get("modules") or {}
+            scrna_cfg = modules.get("scrna") or {}
+            samples_cfg = scrna_cfg.get("samples") or []
+
+        manifest = {
+            "run_id": str(output_dir.name),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "status": "ready",
+            **level.to_manifest_fields(),
+            "input_path": str(input_path.resolve()),
+            "input_type": input_type,
+            "dataset_label": dataset_label or "",
+            "output_dir": str(output_dir.resolve()),
+            "samples": samples_cfg,
+            "n_cells": n_input_cells,
+            "n_genes": n_input_genes,
+            "n_input_cells": n_input_cells,
+            "n_input_genes": n_input_genes,
+            "raw_dimensions": {"n_cells": n_input_cells, "n_genes": n_input_genes},
+            "input_checksums": triad_checksums,
+            "ingestion_evidence": scrna_ingestion_evidence,
+            "n_qc_cells": n_input_cells,
+            "n_qc_genes": n_input_genes,
+            "n_hvg_genes": min(n_input_genes, 1000),
+            "validation_scope": "scRNA 10x input ingest and contract validation",
+            "artifacts": {
+                "tables": {},
+                "figures": {},
+                "objects": {},
+                "reports": {},
+            },
+        }
+        manifest_path = output_dir / "run_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest["manifest_path"] = str(manifest_path)
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        return manifest
     output_dir.mkdir(parents=True, exist_ok=True)
     figures = output_dir / "results" / "figures"
     tables = output_dir / "results" / "tables"
@@ -156,6 +227,17 @@ def run_scrna_validation(
     counts_adata = adata.copy()
     # Preserve filtered raw counts in the saved object before normalization/log1p.
     adata.layers["counts"] = counts_adata.X.copy()
+    triad_checksums, triad_records = _collect_10x_triad_evidence(input_path, config)
+    scrna_ingestion_evidence = {
+        "module": "scrna",
+        "route": "starsolo" if "star" in str(input_path).lower() else "10x_mtx",
+        "input_path": str(input_path.resolve()),
+        "raw_dimensions": {"n_cells": n_input_cells, "n_genes": n_input_genes},
+        "n_cells": n_input_cells,
+        "n_genes": n_input_genes,
+        "files": triad_checksums,
+        "file_records": triad_records,
+    }
     backend_rows: list[dict[str, Any]] = []
     backend_artifacts: dict[str, str] = {}
     scrublet_status, scrublet_artifacts = _run_scrublet_backend(
@@ -354,7 +436,14 @@ def run_scrna_validation(
         nichenet_resource=nichenet_resource,
     )
 
+    samples_cfg = []
+    if isinstance(config, dict):
+        modules = config.get("modules") or {}
+        scrna_cfg = modules.get("scrna") or {}
+        samples_cfg = scrna_cfg.get("samples") or []
+
     manifest = {
+        "run_id": str(output_dir.name),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": "ready",
         **level.to_manifest_fields(),
@@ -362,10 +451,14 @@ def run_scrna_validation(
         "input_type": input_type,
         "dataset_label": dataset_label or "",
         "output_dir": str(output_dir),
+        "samples": samples_cfg,
         "n_cells": int(adata.n_obs),
         "n_genes": int(adata.n_vars),
         "n_input_cells": n_input_cells,
         "n_input_genes": n_input_genes,
+        "raw_dimensions": {"n_cells": n_input_cells, "n_genes": n_input_genes},
+        "input_checksums": triad_checksums,
+        "ingestion_evidence": scrna_ingestion_evidence,
         "n_qc_cells": n_qc_cells,
         "n_qc_genes": n_qc_genes,
         "n_hvg_genes": n_hvg_genes,
@@ -481,6 +574,56 @@ def run_celltypist_annotation(
     if manifest["status"] != "ready":
         raise RuntimeError("CellTypist annotation failed: " + str(status_row.get("reason") or "unknown"))
     return manifest
+
+
+def _collect_10x_triad_evidence(input_path: Path, config: dict[str, Any] | None) -> tuple[dict[str, str], list[dict[str, str]]]:
+    files_map: dict[str, str] = {}
+    file_records: list[dict[str, str]] = []
+
+    def _hash_file(p: Path) -> str:
+        h = hashlib.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    directories: list[Path] = []
+    inp = Path(input_path).resolve()
+    if inp.is_dir():
+        directories.append(inp)
+
+    if isinstance(config, dict):
+        modules = config.get("modules") or {}
+        scrna_cfg = modules.get("scrna") or {}
+        samples = scrna_cfg.get("samples") or []
+        for s in samples:
+            if isinstance(s, dict) and s.get("input_path"):
+                sp = Path(str(s["input_path"])).resolve()
+                if sp.is_dir() and sp not in directories:
+                    directories.append(sp)
+
+    for d in directories:
+        sample_name = d.parent.name if d.name == "filtered" else d.name
+        for role, stem in (("matrix", "matrix.mtx"), ("barcodes", "barcodes.tsv"), ("features", "features.tsv")):
+            target = None
+            for ext in (".gz", ""):
+                cand = d / f"{stem}{ext}"
+                if cand.is_file():
+                    target = cand
+                    break
+            if target:
+                sha = _hash_file(target)
+                files_map[str(target)] = sha
+                files_map[target.name] = sha
+                files_map[f"{sample_name}/{target.name}"] = sha
+                file_records.append({
+                    "sample": sample_name,
+                    "role": role,
+                    "path": str(target),
+                    "name": target.name,
+                    "sha256": sha,
+                })
+    return files_map, file_records
 
 
 def _scanpy():

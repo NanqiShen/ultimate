@@ -85,8 +85,9 @@ SAMPLE_ALIASES = ("sample", "sample_id", "sampleid", "sample name", "sample_name
 FASTQ1_ALIASES = ("fastq_1", "fq1", "r1", "fastq_r1", "read1", "fastq1")
 FASTQ2_ALIASES = ("fastq_2", "fq2", "r2", "fastq_r2", "read2", "fastq2")
 STRANDEDNESS_ALIASES = ("strandedness", "strand", "orientation")
+CONDITION_ALIASES = ("condition", "group", "treatment", "phenotype", "status")
 
-NORMALIZED_COLUMNS = ("sample_id", "fastq_1", "fastq_2", "strandedness")
+NORMALIZED_COLUMNS = ("sample_id", "fastq_1", "fastq_2", "strandedness", "condition")
 
 
 def _pick(clean: dict[str, str], aliases: tuple[str, ...]) -> str:
@@ -145,6 +146,7 @@ def _read_samplesheet(path: Path) -> tuple[list[dict[str, str]], str]:
                 "fastq_1": fq1,
                 "fastq_2": _pick(clean, FASTQ2_ALIASES),
                 "strandedness": _pick(clean, STRANDEDNESS_ALIASES) or "auto",
+                "condition": _pick(clean, CONDITION_ALIASES) or "control",
             }
         )
     if not normalized:
@@ -335,10 +337,13 @@ def _render_expected_import_project(
             "  name: upstream_salmon_import",
             f"  output_dir: {run_root}",
             "  organism: human",
+            "samples:",
+            f"  samplesheet: {samplesheet}",
             "modules:",
             "  rnaseq:",
             "    enabled: true",
             f"    input_matrix: {artifacts_dir}/counts_raw.tsv",
+            f"    samplesheet: {samplesheet}",
             "    analysis_level: smoke_backend",
             "# Count semantics (do not overstate):",
             "#   counts_raw.tsv holds salmon transcript-level NumReads values rounded to",
@@ -363,6 +368,7 @@ def _render_expected_import_project(
             "modules:",
             "  scrna:",
             "    enabled: true",
+            f"    input_path: {artifacts_dir}/star/{sample_ids[0]}/filtered",
             "    input_type: 10x_mtx",
             "    analysis_level: smoke_backend",
             "    samples:",
@@ -484,7 +490,7 @@ def prepare_upstream_package(
         _render_expected_import_project(
             route=route_key,
             artifacts_dir=artifacts_dir,
-            samplesheet=samplesheet,
+            samplesheet=normalized_path,
             sample_ids=[row["sample_id"] for row in rows],
         ),
         encoding="utf-8",
