@@ -348,18 +348,18 @@ def check_upstream_acceptance_command(
         elif route == "starsolo":
             samples = pd.read_csv(normalized, sep="\t")["sample_id"].astype(str).tolist() if normalized.is_file() else []
             expected_sample_dirs: list[Path] = []
-            star_dims = None
+            expected_sample_dims: dict[str, dict[str, int]] = {}
             for sample in samples:
                 s_dir = artifacts_dir / "star" / sample / "filtered"
                 expected_sample_dirs.append(s_dir)
                 d_info = check_10x_directory(acceptance, f"upstream:{sample}", s_dir)
-                if d_info.get("shape") and not star_dims:
-                    star_dims = {"n_genes": d_info["shape"][0], "n_cells": d_info["shape"][1]}
+                if d_info.get("shape"):
+                    expected_sample_dims[sample] = {"n_genes": d_info["shape"][0], "n_cells": d_info["shape"][1]}
 
             check_downstream_consumed(
                 acceptance, "downstream", downstream_manifest,
                 expected_inputs=expected_sample_dirs if expected_sample_dirs else artifacts_dir,
-                expected_dimensions=star_dims,
+                expected_sample_dimensions=expected_sample_dims,
             )
         else:
             acceptance.add("route_supported", "fail", f"unsupported route: {route}")

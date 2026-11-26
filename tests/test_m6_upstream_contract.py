@@ -127,36 +127,79 @@ def _setup_valid_starsolo(pkg: Path, samples: tuple[str, ...] = ("S1", "S2")) ->
     artifacts = pkg / ARTIFACTS_SUBDIR
     sample_dirs = []
     all_triad_shas: dict[str, str] = {}
+    samples_manifest: list[dict[str, Any]] = []
+
+    # Two genuinely different sample definitions with different dims and content
+    sample_specs = {
+        "S1": {
+            "genes": ["G1", "G2"],
+            "barcodes": ["CELL_S1_1", "CELL_S1_2"],
+            "matrix": "%%MatrixMarket matrix coordinate integer general\n2 2 2\n1 1 5\n2 2 3\n",
+            "n_genes": 2,
+            "n_cells": 2,
+        },
+        "S2": {
+            "genes": ["GENE_A", "GENE_B", "GENE_C"],
+            "barcodes": ["CELL_S2_1", "CELL_S2_2", "CELL_S2_3", "CELL_S2_4"],
+            "matrix": "%%MatrixMarket matrix coordinate integer general\n3 4 3\n1 1 7\n2 3 8\n3 4 9\n",
+            "n_genes": 3,
+            "n_cells": 4,
+        },
+    }
+
+    first_genes = 2
+    first_cells = 2
+
     for s in samples:
+        spec = sample_specs.get(s, sample_specs["S1"])
         filtered = artifacts / "star" / s / "filtered"
         filtered.mkdir(parents=True, exist_ok=True)
-        mtx_content = "%%MatrixMarket matrix coordinate integer general\n2 2 2\n1 1 5\n2 2 3\n"
         with gzip.open(filtered / "matrix.mtx.gz", "wt", encoding="utf-8") as h:
-            h.write(mtx_content)
+            h.write(spec["matrix"])
         with gzip.open(filtered / "barcodes.tsv.gz", "wt", encoding="utf-8") as h:
-            h.write("AAAC-1\nAAAG-1\n")
+            h.write("\n".join(spec["barcodes"]) + "\n")
         with gzip.open(filtered / "features.tsv.gz", "wt", encoding="utf-8") as h:
-            h.write("G1\tG1\tGene Expression\nG2\tG2\tGene Expression\n")
+            h.write("\n".join(f"{g}\t{g}\tGene Expression" for g in spec["genes"]) + "\n")
         sample_dirs.append(filtered)
-        for stem in ("matrix.mtx.gz", "barcodes.tsv.gz", "features.tsv.gz"):
-            sha = sha256_file(filtered / stem)
-            all_triad_shas[stem] = sha
-            all_triad_shas[str(filtered / stem)] = sha
-            all_triad_shas[f"{s}/{stem}"] = sha
+
+        role_shas = {
+            "matrix": sha256_file(filtered / "matrix.mtx.gz"),
+            "barcodes": sha256_file(filtered / "barcodes.tsv.gz"),
+            "features": sha256_file(filtered / "features.tsv.gz"),
+        }
+        path_shas = {
+            str((filtered / "matrix.mtx.gz").resolve()): role_shas["matrix"],
+            str((filtered / "barcodes.tsv.gz").resolve()): role_shas["barcodes"],
+            str((filtered / "features.tsv.gz").resolve()): role_shas["features"],
+        }
+        all_triad_shas.update(path_shas)
+        samples_manifest.append({
+            "sample_id": s,
+            "input_path": str(filtered.resolve()),
+            "parsed": True,
+            "n_genes": spec["n_genes"],
+            "n_cells": spec["n_cells"],
+            "raw_dimensions": {"n_genes": spec["n_genes"], "n_cells": spec["n_cells"]},
+            "role_checksums": role_shas,
+            "files": path_shas,
+        })
+        if s == samples[0]:
+            first_genes = spec["n_genes"]
+            first_cells = spec["n_cells"]
 
     (artifacts / "import_config.yaml").write_text("module: scrna\n", encoding="utf-8")
     manifest = pkg.parent / f"downstream_manifest_{pkg.name}.json"
     manifest.write_text(
         json.dumps({
-            "run_id": "run_scrna_multi",
+            "run_id": f"run_scrna_{pkg.name}",
             "generated_at": "2026-11-26T12:00:00Z",
             "status": "ready",
-            "input_path": str(sample_dirs[0]),
-            "samples": [{"sample_id": s, "input_path": str(sd)} for s, sd in zip(samples, sample_dirs)],
+            "input_path": str(sample_dirs[0].resolve()),
+            "samples": samples_manifest,
             "input_checksums": all_triad_shas,
-            "n_cells": 2,
-            "n_genes": 2,
-            "raw_dimensions": {"n_cells": 2, "n_genes": 2},
+            "n_cells": first_cells,
+            "n_genes": first_genes,
+            "raw_dimensions": {"n_cells": first_cells, "n_genes": first_genes},
             "delivery_allowed": False,
         }),
         encoding="utf-8",
@@ -530,7 +573,115 @@ def test_acceptance_counterexample_4_10x_triad_file_tampered(tmp_path: Path):
         ["check-upstream-acceptance", "--package-dir", str(pkg), "--downstream-manifest", str(m_valid), "--allow-single-route"],
     )
     assert res.exit_code != 0
-    assert "checksum_mismatch:barcodes.tsv.gz" in res.output
+    assert "checksum:S1:barcodes" in res.output or "checksum_mismatch" in res.output
+
+
+def test_corrupt_mtx_fails_parsing_and_never_emits_ready(tmp_path: Path):
+    """Vulnerability 1: An unparseable matrix.mtx must fail parsing and never emit ready."""
+    corrupt_10x = tmp_path / "corrupt_10x"
+    corrupt_10x.mkdir(parents=True)
+    (corrupt_10x / "matrix.mtx").write_text("THIS IS NOT MATRIX MARKET DATA\nGARBAGE LINE 1\nGARBAGE LINE 2\n", encoding="utf-8")
+    (corrupt_10x / "barcodes.tsv").write_text("CELL_1\n", encoding="utf-8")
+    (corrupt_10x / "features.tsv").write_text("GENE_1\tGENE_1\tGene Expression\n", encoding="utf-8")
+
+    import ultimate.scrna_smoke as scrna_mod
+    out_dir = tmp_path / "corrupt_run"
+    with pytest.raises(RuntimeError, match="10x matrix parsing failed"):
+        scrna_mod.run_scrna_validation(
+            input_path=corrupt_10x,
+            input_type="10x_mtx",
+            output_dir=out_dir,
+        )
+    # The written manifest must be blocked, NEVER ready
+    manifest = json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "blocked"
+    assert manifest.get("delivery_allowed") is False
+
+
+def test_multisample_s2_not_parsed_fails(tmp_path: Path):
+    """Vulnerability 2: If S2 was never parsed, acceptance fails and names S2."""
+    runner = CliRunner()
+    _fastq(tmp_path / "star" / "fastq" / "S2_R1.fastq.gz")
+    _fastq(tmp_path / "star" / "fastq" / "S2_R2.fastq.gz")
+    sheet_star = _sheet(
+        tmp_path / "star",
+        header="sample\tfastq_1\tfastq_2",
+        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
+              "S2\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
+    )
+    pkg_star = _package(tmp_path / "star", "starsolo", samplesheet=sheet_star)
+    sdirs, m_valid = _setup_valid_starsolo(pkg_star, samples=("S1", "S2"))
+    tampered = json.loads(m_valid.read_text(encoding="utf-8"))
+    # S2 was not parsed
+    for s in tampered.get("samples", []):
+        if s.get("sample_id") == "S2":
+            s["parsed"] = False
+    m_bad = tmp_path / "m_s2_unparsed.json"
+    m_bad.write_text(json.dumps(tampered), encoding="utf-8")
+
+    res = runner.invoke(
+        main,
+        ["check-upstream-acceptance", "--package-dir", str(pkg_star), "--downstream-manifest", str(m_bad), "--allow-single-route"],
+    )
+    assert res.exit_code != 0
+    assert "sample_parsed:S2" in res.output
+
+
+def test_multisample_s2_dimension_mismatch_fails(tmp_path: Path):
+    """Vulnerability 2: If S2 dimensions do not match its own upstream matrix, fails and names S2."""
+    runner = CliRunner()
+    _fastq(tmp_path / "star" / "fastq" / "S2_R1.fastq.gz")
+    _fastq(tmp_path / "star" / "fastq" / "S2_R2.fastq.gz")
+    sheet_star = _sheet(
+        tmp_path / "star",
+        header="sample\tfastq_1\tfastq_2",
+        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
+              "S2\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
+    )
+    pkg_star = _package(tmp_path / "star", "starsolo", samplesheet=sheet_star)
+    sdirs, m_valid = _setup_valid_starsolo(pkg_star, samples=("S1", "S2"))
+    tampered = json.loads(m_valid.read_text(encoding="utf-8"))
+    # S2 upstream is 3 genes x 4 cells. Tamper S2 in downstream to report 2 genes x 2 cells (like S1)
+    for s in tampered.get("samples", []):
+        if s.get("sample_id") == "S2":
+            s["n_genes"] = 2
+            s["n_cells"] = 2
+    m_bad = tmp_path / "m_s2_bad_dims.json"
+    m_bad.write_text(json.dumps(tampered), encoding="utf-8")
+
+    res = runner.invoke(
+        main,
+        ["check-upstream-acceptance", "--package-dir", str(pkg_star), "--downstream-manifest", str(m_bad), "--allow-single-route"],
+    )
+    assert res.exit_code != 0
+    assert "sample_dims:S2" in res.output
+
+
+def test_multisample_s2_file_tampered_fails(tmp_path: Path):
+    """Vulnerability 2: If any file of S2 changes, fails and names S2 and the failing item."""
+    runner = CliRunner()
+    _fastq(tmp_path / "star" / "fastq" / "S2_R1.fastq.gz")
+    _fastq(tmp_path / "star" / "fastq" / "S2_R2.fastq.gz")
+    sheet_star = _sheet(
+        tmp_path / "star",
+        header="sample\tfastq_1\tfastq_2",
+        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
+              "S2\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
+    )
+    pkg_star = _package(tmp_path / "star", "starsolo", samplesheet=sheet_star)
+    sdirs, m_valid = _setup_valid_starsolo(pkg_star, samples=("S1", "S2"))
+
+    # Tamper S2's barcodes.tsv.gz after manifest recording
+    s2_barcodes = sdirs[1] / "barcodes.tsv.gz"
+    with gzip.open(s2_barcodes, "wt", encoding="utf-8") as h:
+        h.write("TAMPERED_S2_BARCODE\n")
+
+    res = runner.invoke(
+        main,
+        ["check-upstream-acceptance", "--package-dir", str(pkg_star), "--downstream-manifest", str(m_valid), "--allow-single-route"],
+    )
+    assert res.exit_code != 0
+    assert "checksum:S2:barcodes" in res.output
 
 
 def test_m6_counterexample_missing_required_route(tmp_path: Path):

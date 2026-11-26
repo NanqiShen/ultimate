@@ -362,7 +362,7 @@ def sha256_file(path: Path) -> str:
 
 
 def _collect_manifest_checksums(payload: dict[str, Any]) -> dict[str, str]:
-    """Collect recorded input checksums strictly bound to their filenames and paths."""
+    """Collect recorded input checksums strictly bound to their resolved paths (no bare filenames)."""
     checksums: dict[str, str] = {}
     for key in ("input_checksum", "input_sha256", "checksum"):
         val = payload.get(key)
@@ -373,18 +373,26 @@ def _collect_manifest_checksums(payload: dict[str, Any]) -> dict[str, str]:
     if isinstance(raw_checks, dict):
         for k, v in raw_checks.items():
             if isinstance(v, str) and len(v) == 64:
-                checksums[Path(str(k)).name] = v
+                try:
+                    p = Path(str(k)).resolve()
+                    checksums[str(p)] = v
+                except Exception:
+                    pass
                 checksums[str(k)] = v
     elif isinstance(raw_checks, list):
         for item in raw_checks:
             if isinstance(item, dict):
-                p = item.get("path") or item.get("file") or item.get("name")
+                p = item.get("path")
                 s = item.get("sha256") or item.get("checksum")
                 if p and s and len(str(s)) == 64:
-                    checksums[Path(str(p)).name] = str(s)
+                    try:
+                        resolved_p = str(Path(str(p)).resolve())
+                        checksums[resolved_p] = str(s)
+                    except Exception:
+                        pass
                     checksums[str(p)] = str(s)
 
-    # Check within ingestion_evidence
+    # Ingestion evidence
     ing_ev = payload.get("ingestion_evidence")
     if isinstance(ing_ev, dict):
         for sub in ing_ev.values() if not ing_ev.get("files") else [ing_ev]:
@@ -393,23 +401,12 @@ def _collect_manifest_checksums(payload: dict[str, Any]) -> dict[str, str]:
                 if isinstance(f_map, dict):
                     for k, v in f_map.items():
                         if isinstance(v, str) and len(v) == 64:
-                            checksums[Path(str(k)).name] = v
+                            try:
+                                resolved_k = str(Path(str(k)).resolve())
+                                checksums[resolved_k] = v
+                            except Exception:
+                                pass
                             checksums[str(k)] = v
-                f_recs = sub.get("file_records") or []
-                if isinstance(f_recs, list):
-                    for rec in f_recs:
-                        if isinstance(rec, dict):
-                            p = rec.get("path") or rec.get("name")
-                            s = rec.get("sha256")
-                            if p and s and len(str(s)) == 64:
-                                checksums[Path(str(p)).name] = str(s)
-                                checksums[str(p)] = str(s)
-
-    raw_qc = payload.get("raw_qc")
-    if isinstance(raw_qc, dict):
-        c = raw_qc.get("input_checksum") or raw_qc.get("checksum")
-        if isinstance(c, str) and len(c) == 64:
-            checksums["raw_qc"] = c
     return checksums
 
 
@@ -420,6 +417,7 @@ def check_downstream_consumed(
     *,
     expected_inputs: list[Path] | Path,
     expected_dimensions: dict[str, int] | None = None,
+    expected_sample_dimensions: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Prove Ultimate actually read *this* upstream artefact in this run with runtime evidence."""
     run_manifest_path = Path(run_manifest_path)
@@ -477,58 +475,119 @@ def check_downstream_consumed(
         f"missing_consumptions={missing_consumptions} recorded={sorted(resolved_recorded)}",
     )
 
-    # 3. Input checksum verification: strictly bound to exact filenames/paths (no loose values() matching)
+    # 3. Input checksum verification: bound strictly to resolved paths or sample roles (no bare filenames)
     manifest_checksums = _collect_manifest_checksums(payload)
-    missing_checksums = []
 
-    files_to_verify: list[Path] = []
-    for exp in expected_inputs:
-        if exp.is_dir():
-            # In 10x mode, verify the full triad (matrix, barcodes, features)
-            for stem in ("matrix.mtx", "barcodes.tsv", "features.tsv"):
-                found_stem = None
-                for ext in (".gz", ""):
-                    cand = exp / f"{stem}{ext}"
-                    if cand.is_file():
-                        found_stem = cand
+    if expected_sample_dimensions is not None:
+        # Single-cell (STARsolo) sample-by-sample check!
+        downstream_samples = payload.get("samples") or []
+        sample_lookup: dict[str, dict[str, Any]] = {}
+        if isinstance(downstream_samples, list):
+            for s_item in downstream_samples:
+                if isinstance(s_item, dict) and s_item.get("sample_id"):
+                    sample_lookup[str(s_item["sample_id"])] = s_item
+
+        for sample_id, exp_dims in expected_sample_dimensions.items():
+            s_rec = sample_lookup.get(sample_id)
+            # a) Parsed check
+            is_parsed = bool(s_rec and s_rec.get("parsed") is True)
+            acceptance.add(
+                f"{prefix}:sample_parsed:{sample_id}",
+                STATUS_PASS if is_parsed else STATUS_FAIL,
+                f"sample {sample_id} parsed={is_parsed}",
+            )
+            # b) Dimension reconciliation
+            if s_rec:
+                s_genes = s_rec.get("n_genes")
+                s_cells = s_rec.get("n_cells")
+                dims_ok = bool(s_genes == exp_dims.get("n_genes") and s_cells == exp_dims.get("n_cells"))
+                acceptance.add(
+                    f"{prefix}:sample_dims:{sample_id}",
+                    STATUS_PASS if dims_ok else STATUS_FAIL,
+                    f"sample {sample_id} expected {exp_dims} got {{'n_genes': {s_genes}, 'n_cells': {s_cells}}}",
+                )
+            else:
+                acceptance.add(
+                    f"{prefix}:sample_dims:{sample_id}",
+                    STATUS_FAIL,
+                    f"sample {sample_id} missing in downstream samples manifest",
+                )
+            # c) Checksum check for triad files of this sample
+            s_dir = None
+            for exp_item in expected_inputs:
+                if exp_item.is_dir():
+                    inferred_id = exp_item.parent.name if exp_item.name == "filtered" else exp_item.name
+                    if inferred_id == sample_id:
+                        s_dir = exp_item
                         break
-                if found_stem:
-                    files_to_verify.append(found_stem)
-                else:
-                    missing_checksums.append(f"missing_triad_file:{exp.name}/{stem}")
-        elif exp.is_file():
-            files_to_verify.append(exp)
-        else:
-            missing_checksums.append(f"target_not_found:{exp.name}")
+            if s_dir is None:
+                acceptance.add(f"{prefix}:sample_triad_dir:{sample_id}", STATUS_MISSING, f"upstream directory for {sample_id} not found")
+            else:
+                for role, stem in (("matrix", "matrix.mtx"), ("barcodes", "barcodes.tsv"), ("features", "features.tsv")):
+                    cand_file = None
+                    for ext in (".gz", ""):
+                        if (s_dir / f"{stem}{ext}").is_file():
+                            cand_file = s_dir / f"{stem}{ext}"
+                            break
+                    if cand_file is None:
+                        acceptance.add(f"{prefix}:checksum:{sample_id}:{role}", STATUS_MISSING, f"file {stem} missing in {s_dir}")
+                        continue
+                    actual_sha = sha256_file(cand_file)
+                    cand_resolved = str(cand_file.resolve())
 
-    for target_file in files_to_verify:
-        actual_sha = sha256_file(target_file)
-        # Look up checksum bound specifically to this file name or path
-        recorded_sha = (
-            manifest_checksums.get(target_file.name)
-            or manifest_checksums.get(str(target_file.resolve()))
-            or manifest_checksums.get(str(target_file))
-            or manifest_checksums.get(f"{target_file.parent.parent.name}/{target_file.name}")
+                    rec_sha = None
+                    if s_rec:
+                        if isinstance(s_rec.get("role_checksums"), dict):
+                            rec_sha = s_rec["role_checksums"].get(role)
+                        if not rec_sha and isinstance(s_rec.get("files"), dict):
+                            rec_sha = s_rec["files"].get(cand_resolved) or s_rec["files"].get(str(cand_file))
+                    if not rec_sha:
+                        rec_sha = manifest_checksums.get(cand_resolved) or manifest_checksums.get(str(cand_file))
+
+                    if not rec_sha:
+                        acceptance.add(
+                            f"{prefix}:checksum:{sample_id}:{role}",
+                            STATUS_FAIL,
+                            f"checksum for sample {sample_id} role {role} ({cand_file.name}) not bound in downstream manifest",
+                        )
+                    elif rec_sha != actual_sha:
+                        acceptance.add(
+                            f"{prefix}:checksum:{sample_id}:{role}",
+                            STATUS_FAIL,
+                            f"checksum mismatch for sample {sample_id} role {role} ({cand_file.name}): exp {actual_sha[:8]} got {rec_sha[:8]}",
+                        )
+                    else:
+                        acceptance.add(f"{prefix}:checksum:{sample_id}:{role}", STATUS_PASS, f"sample {sample_id} {role} verified")
+
+    else:
+        # Bulk route checksum checking
+        missing_checksums = []
+        for exp in expected_inputs:
+            target_file = Path(exp).resolve()
+            if target_file.is_file():
+                actual_sha = sha256_file(target_file)
+                cand_resolved = str(target_file)
+                recorded_sha = manifest_checksums.get(cand_resolved) or manifest_checksums.get(str(exp))
+                if not recorded_sha and "primary" in manifest_checksums:
+                    prim_input = str(payload.get("input_matrix") or payload.get("input_path") or "")
+                    if Path(prim_input).resolve() == target_file:
+                        recorded_sha = manifest_checksums["primary"]
+
+                if not recorded_sha:
+                    missing_checksums.append(f"checksum_not_bound_to_file:{target_file.name}")
+                elif recorded_sha != actual_sha:
+                    missing_checksums.append(f"checksum_mismatch:{target_file.name}:exp_{actual_sha[:8]}_got_{recorded_sha[:8]}")
+            else:
+                missing_checksums.append(f"target_not_found:{target_file.name}")
+
+        has_all_checksums = bool(expected_inputs and not missing_checksums)
+        acceptance.add(
+            f"{prefix}:downstream_input_checksum",
+            STATUS_PASS if has_all_checksums else STATUS_FAIL,
+            f"verified {len(expected_inputs)} input files" if has_all_checksums else f"unmatched: {missing_checksums}",
         )
-        if not recorded_sha and "primary" in manifest_checksums:
-            prim_input = str(payload.get("input_matrix") or payload.get("input_path") or "")
-            if Path(prim_input).name == target_file.name or str(Path(prim_input).resolve()) == str(target_file.resolve()):
-                recorded_sha = manifest_checksums["primary"]
 
-        if not recorded_sha:
-            missing_checksums.append(f"checksum_not_bound_to_file:{target_file.name}")
-        elif recorded_sha != actual_sha:
-            missing_checksums.append(f"checksum_mismatch:{target_file.name}:exp_{actual_sha[:8]}_got_{recorded_sha[:8]}")
-
-    has_all_checksums = bool(files_to_verify and not missing_checksums)
-    acceptance.add(
-        f"{prefix}:downstream_input_checksum",
-        STATUS_PASS if has_all_checksums else STATUS_FAIL,
-        f"verified {len(files_to_verify)} input files" if has_all_checksums else f"unmatched: {missing_checksums}",
-    )
-
-    # 4. Actual dimensions check: must report BOTH features/genes AND samples/cells,
-    # and if expected_dimensions is provided, must match upstream values exactly.
+    # 4. Actual dimensions check: must report BOTH features/genes AND samples/cells
     downstream_features = (
         payload.get("n_genes")
         or payload.get("n_features")

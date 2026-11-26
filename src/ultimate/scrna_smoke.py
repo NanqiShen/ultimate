@@ -126,37 +126,71 @@ def run_scrna_validation(
     if sc is None:
         if input_type != "10x_mtx":
             raise RuntimeError("scanpy is required for non-10x_mtx single-cell inputs; run in ultimate-scrna environment")
-        triad_checksums, triad_records = _collect_10x_triad_evidence(input_path, config)
 
-        def _read_nonempty_lines(p: Path) -> list[str]:
-            opener = gzip.open if p.suffix == ".gz" else open
-            with opener(p, "rt", encoding="utf-8", errors="ignore") as h:
-                return [line.strip() for line in h if line.strip()]
-
-        barcodes_file = next((input_path / f"barcodes.tsv{ext}" for ext in (".gz", "") if (input_path / f"barcodes.tsv{ext}").is_file()), None)
-        features_file = next((input_path / f"features.tsv{ext}" for ext in (".gz", "") if (input_path / f"features.tsv{ext}").is_file()), None)
-        matrix_file = next((input_path / f"matrix.mtx{ext}" for ext in (".gz", "") if (input_path / f"matrix.mtx{ext}").is_file()), None)
-        if not (barcodes_file and features_file and matrix_file):
-            raise FileNotFoundError(f"Missing 10x files in {input_path}")
-
-        n_input_cells = len(_read_nonempty_lines(barcodes_file))
-        n_input_genes = len(_read_nonempty_lines(features_file))
-        scrna_ingestion_evidence = {
-            "module": "scrna",
-            "route": "starsolo" if "star" in str(input_path).lower() else "10x_mtx",
-            "input_path": str(input_path.resolve()),
-            "raw_dimensions": {"n_cells": n_input_cells, "n_genes": n_input_genes},
-            "n_cells": n_input_cells,
-            "n_genes": n_input_genes,
-            "files": triad_checksums,
-            "file_records": triad_records,
-        }
         samples_cfg = []
         if isinstance(config, dict):
             modules = config.get("modules") or {}
             scrna_cfg = modules.get("scrna") or {}
             samples_cfg = scrna_cfg.get("samples") or []
 
+        sample_targets: list[tuple[str, Path]] = []
+        if samples_cfg:
+            for s in samples_cfg:
+                if isinstance(s, dict) and s.get("input_path"):
+                    s_id = str(s.get("sample_id") or Path(str(s["input_path"])).parent.name)
+                    sample_targets.append((s_id, Path(str(s["input_path"])).resolve()))
+        else:
+            s_id = input_path.parent.name if input_path.name == "filtered" else input_path.name
+            sample_targets.append((s_id, input_path.resolve()))
+
+        all_path_checksums: dict[str, str] = {}
+        samples_manifest: list[dict[str, Any]] = []
+        first_genes = 0
+        first_cells = 0
+
+        try:
+            for idx, (s_id, s_dir) in enumerate(sample_targets):
+                n_genes, n_cells, role_shas, path_shas = _parse_10x_matrix_strict(s_dir)
+                if idx == 0:
+                    first_genes = n_genes
+                    first_cells = n_cells
+                all_path_checksums.update(path_shas)
+                samples_manifest.append({
+                    "sample_id": s_id,
+                    "input_path": str(s_dir),
+                    "parsed": True,
+                    "n_genes": n_genes,
+                    "n_cells": n_cells,
+                    "raw_dimensions": {"n_genes": n_genes, "n_cells": n_cells},
+                    "role_checksums": role_shas,
+                    "files": path_shas,
+                })
+        except Exception as exc:
+            blocked_manifest = {
+                "run_id": str(output_dir.name),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "status": "blocked",
+                "blocked_reason": f"matrix_parsing_failed:{type(exc).__name__}:{exc}",
+                "analysis_level": "blocked_input",
+                "delivery_allowed": False,
+                "input_path": str(input_path.resolve()),
+                "input_type": input_type,
+            }
+            manifest_path = output_dir / "run_manifest.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(json.dumps(blocked_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+            raise RuntimeError(f"10x matrix parsing failed: {exc}") from exc
+
+        scrna_ingestion_evidence = {
+            "module": "scrna",
+            "route": "starsolo" if "star" in str(input_path).lower() else "10x_mtx",
+            "input_path": str(input_path.resolve()),
+            "raw_dimensions": {"n_cells": first_cells, "n_genes": first_genes},
+            "n_cells": first_cells,
+            "n_genes": first_genes,
+            "samples": samples_manifest,
+            "files": all_path_checksums,
+        }
         manifest = {
             "run_id": str(output_dir.name),
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -166,17 +200,17 @@ def run_scrna_validation(
             "input_type": input_type,
             "dataset_label": dataset_label or "",
             "output_dir": str(output_dir.resolve()),
-            "samples": samples_cfg,
-            "n_cells": n_input_cells,
-            "n_genes": n_input_genes,
-            "n_input_cells": n_input_cells,
-            "n_input_genes": n_input_genes,
-            "raw_dimensions": {"n_cells": n_input_cells, "n_genes": n_input_genes},
-            "input_checksums": triad_checksums,
+            "samples": samples_manifest,
+            "n_cells": first_cells,
+            "n_genes": first_genes,
+            "n_input_cells": first_cells,
+            "n_input_genes": first_genes,
+            "raw_dimensions": {"n_cells": first_cells, "n_genes": first_genes},
+            "input_checksums": all_path_checksums,
             "ingestion_evidence": scrna_ingestion_evidence,
-            "n_qc_cells": n_input_cells,
-            "n_qc_genes": n_input_genes,
-            "n_hvg_genes": min(n_input_genes, 1000),
+            "n_qc_cells": first_cells,
+            "n_qc_genes": first_genes,
+            "n_hvg_genes": min(first_genes, 1000),
             "validation_scope": "scRNA 10x input ingest and contract validation",
             "artifacts": {
                 "tables": {},
@@ -574,6 +608,105 @@ def run_celltypist_annotation(
     if manifest["status"] != "ready":
         raise RuntimeError("CellTypist annotation failed: " + str(status_row.get("reason") or "unknown"))
     return manifest
+
+
+def _parse_10x_matrix_strict(directory: Path) -> tuple[int, int, dict[str, str], dict[str, str]]:
+    """Strictly parse matrix.mtx(.gz), barcodes.tsv(.gz), and features.tsv(.gz).
+
+    Must verify:
+    1. All three files exist.
+    2. barcodes and features are readable and non-empty.
+    3. matrix is valid Matrix Market format with coordinate integer/real entries.
+    4. Matrix header declared rows/cols match features/barcodes lengths exactly.
+    5. Matrix entries are within valid 1-based bounds.
+    If matrix is unparseable, corrupt, or dimensions mismatch, raises ValueError.
+    Returns:
+        (n_genes, n_cells, role_checksums, path_checksums)
+    """
+    directory = Path(directory).resolve()
+    barcodes_file = next((directory / f"barcodes.tsv{ext}" for ext in (".gz", "") if (directory / f"barcodes.tsv{ext}").is_file()), None)
+    features_file = next((directory / f"{stem}.tsv{ext}" for stem in ("features", "genes") for ext in (".gz", "") if (directory / f"{stem}.tsv{ext}").is_file()), None)
+    matrix_file = next((directory / f"matrix.mtx{ext}" for ext in (".gz", "") if (directory / f"matrix.mtx{ext}").is_file()), None)
+
+    if not (barcodes_file and features_file and matrix_file):
+        raise FileNotFoundError(f"Missing required 10x triad files in {directory}")
+
+    def _hash_file(p: Path) -> str:
+        h = hashlib.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    mat_sha = _hash_file(matrix_file)
+    bar_sha = _hash_file(barcodes_file)
+    feat_sha = _hash_file(features_file)
+    role_checksums = {"matrix": mat_sha, "barcodes": bar_sha, "features": feat_sha}
+    path_checksums = {
+        str(matrix_file.resolve()): mat_sha,
+        str(barcodes_file.resolve()): bar_sha,
+        str(features_file.resolve()): feat_sha,
+    }
+
+    def _read_nonempty_lines(p: Path) -> list[str]:
+        opener = gzip.open if p.suffix == ".gz" else open
+        with opener(p, "rt", encoding="utf-8", errors="ignore") as h:
+            return [line.strip() for line in h if line.strip()]
+
+    barcodes = _read_nonempty_lines(barcodes_file)
+    features = _read_nonempty_lines(features_file)
+    if not barcodes:
+        raise ValueError(f"Empty barcodes file: {barcodes_file}")
+    if not features:
+        raise ValueError(f"Empty features file: {features_file}")
+    n_cells = len(barcodes)
+    n_genes = len(features)
+
+    # Strictly parse matrix.mtx
+    opener = gzip.open if matrix_file.suffix == ".gz" else open
+    try:
+        with opener(matrix_file, "rt", encoding="utf-8", errors="ignore") as h:
+            lines = [line.strip() for line in h if line.strip()]
+    except Exception as exc:
+        raise ValueError(f"Failed to read Matrix Market file {matrix_file}: {exc}") from exc
+
+    if not lines:
+        raise ValueError(f"Empty matrix market file: {matrix_file}")
+
+    if not lines[0].startswith("%%MatrixMarket matrix coordinate"):
+        raise ValueError(f"Corrupt or invalid Matrix Market header in {matrix_file}: {lines[0]}")
+
+    data_lines = [l for l in lines if not l.startswith("%")]
+    if not data_lines:
+        raise ValueError(f"Missing matrix dimensions line in {matrix_file}")
+
+    dim_parts = data_lines[0].split()
+    if len(dim_parts) < 3:
+        raise ValueError(f"Invalid Matrix Market shape header: {data_lines[0]}")
+    try:
+        m_rows, m_cols, m_nnz = int(dim_parts[0]), int(dim_parts[1]), int(dim_parts[2])
+    except ValueError as exc:
+        raise ValueError(f"Non-integer dimensions in {matrix_file}: {data_lines[0]}") from exc
+
+    if m_rows != n_genes or m_cols != n_cells:
+        raise ValueError(f"Matrix Market declared dims ({m_rows}x{m_cols}) mismatch features({n_genes}) and barcodes({n_cells}) in {directory}")
+
+    entries = data_lines[1:]
+    if len(entries) != m_nnz:
+        raise ValueError(f"Matrix Market entries count ({len(entries)}) does not match declared nnz ({m_nnz}) in {matrix_file}")
+
+    for idx, entry in enumerate(entries, start=1):
+        parts = entry.split()
+        if len(parts) < 3:
+            raise ValueError(f"Corrupt entry at line {idx} in {matrix_file}: {entry}")
+        try:
+            r, c, val = int(parts[0]), int(parts[1]), float(parts[2])
+        except ValueError as exc:
+            raise ValueError(f"Corrupt numeric entry at line {idx} in {matrix_file}: {entry}") from exc
+        if r < 1 or r > m_rows or c < 1 or c > m_cols:
+            raise ValueError(f"Coordinates out of bounds ({r}, {c}) for shape ({m_rows}, {m_cols}) in {matrix_file}")
+
+    return n_genes, n_cells, role_checksums, path_checksums
 
 
 def _collect_10x_triad_evidence(input_path: Path, config: dict[str, Any] | None) -> tuple[dict[str, str], list[dict[str, str]]]:
