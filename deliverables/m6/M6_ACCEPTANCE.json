@@ -1,9 +1,9 @@
 {
-  "schema": "ultimate.m6.acceptance.v4",
-  "generated_at": "2026-11-26T13:19:11.926671+00:00",
-  "phase": "M6-P0-Targeted-Resigned",
+  "schema": "ultimate.m6.acceptance.v5",
+  "generated_at": "2026-11-26T14:03:12.882361+00:00",
+  "phase": "M6-P0-Final-Residual-Signed",
   "overall_status": "BLOCKED",
-  "status_reason": "M6-P0 targeted re-sign for 10x matrix parsing before evidence issuance and multi-sample sample-by-sample reconciliation is complete and fully verified locally (617 passed, 26 skipped, 0 failed). P0 is ready for sign-off. Overall M6 status remains strictly BLOCKED until P1 cluster execution is approved and completed.",
+  "status_reason": "M6-P0 residual acceptance items are fully resolved and locally verified (618 passed, 26 skipped, 0 failed). Strict sample_id -> input_path binding and universal 10x matrix parsing across all declared samples are confirmed. P0 is complete and ready for sign-off. Overall M6 status remains strictly BLOCKED until P1 cluster execution is approved and completed.",
   "commit_lineage": {
     "reported_m5_review_commit": "43d6e7e",
     "actual_baseline_commit": "4b80344",
@@ -14,28 +14,54 @@
     "p0_final_tightened_code_commit": "20180b7",
     "p0_final_tightened_receipt_commit": "2ac5860",
     "p0_targeted_resigned_code_commit": "0193068",
+    "p0_targeted_resigned_receipt_commit": "d623464",
+    "p0_residual_fixed_code_commit": "5830cca",
     "receipt_commit": "HEAD"
   },
-  "vulnerabilities_fixed": [
+  "residual_acceptance_specifications": [
     {
-      "id": "VULN-1-MATRIX-PARSING-BEFORE-EVIDENCE",
-      "title": "Strict 10x matrix parsing before issuing evidence",
-      "status": "fixed",
-      "defect_description": "Simulated scanpy unavailability with an unparseable matrix.mtx still emitted ready with 1x1 dims.",
-      "fix_implementation": "Implemented _parse_10x_matrix_strict in scrna_smoke.py. It strictly checks MatrixMarket banner, declared dimensions vs barcodes/features lengths, and data entry bounds. Any corrupt or invalid matrix throws ValueError and run_scrna_validation writes status='blocked' (delivery_allowed=False), never 'ready'.",
-      "verification_test": "test_corrupt_mtx_fails_parsing_and_never_emits_ready (passed)"
+      "id": "RESIDUAL-1-PATH-BINDING",
+      "title": "Strict sample_id -> normalized input_path -> triad files/hashes -> raw dimensions binding",
+      "status": "pass",
+      "detail": "check_downstream_consumed now verifies that each sample's resolved input_path in downstream manifest matches its expected upstream directory exactly. Swapping S1 and S2 input_path while keeping path sets equal fails immediately with sample_input_path:S1 and sample_input_path:S2."
     },
     {
-      "id": "VULN-2-MULTISAMPLE-ISOLATION-AND-PARSING",
-      "title": "Multi-sample hash collision elimination and independent matrix parsing",
-      "status": "fixed",
-      "defect_description": "Both samples provided identical standard filenames causing hash collisions in bare-filename lookup. Furthermore, S2 was only hashed but its matrix was never parsed.",
-      "fix_implementation": "1. Eliminated bare-filename fallback in _collect_manifest_checksums and check_downstream_consumed. All files are bound by resolved absolute paths and sample roles. 2. In multi-sample runs, every declared sample is independently and strictly parsed with _parse_10x_matrix_strict. 3. Downstream acceptance verifies each sample's parsed state, exact dimension match against its own upstream matrix, and triad checksums.",
-      "verification_tests": [
-        "test_multisample_s2_not_parsed_fails (passed)",
-        "test_multisample_s2_dimension_mismatch_fails (passed)",
-        "test_multisample_s2_file_tampered_fails (passed)"
-      ]
+      "id": "RESIDUAL-2-UNIVERSAL-PARSING",
+      "title": "Universal 10x matrix parsing before evidence issuance across all declared samples",
+      "status": "pass",
+      "detail": "Moved _parse_10x_matrix_strict to the front of run_scrna_validation so that all declared samples are parsed and their matrices verified independently regardless of scanpy presence. Accurately tags validation_scope as '10x_upstream_import_acceptance' and import_mode as 'strict_matrix_market_ingest' without claiming scanpy analysis."
+    }
+  ],
+  "counterexample_regressions": [
+    {
+      "test_case": "test_multisample_swapped_s1_s2_input_paths_fails",
+      "scenario": "S1 and S2 input_path swapped in downstream manifest while maintaining all valid files and paths",
+      "expected_outcome": "FAIL with sample_input_path:S1 and/or sample_input_path:S2",
+      "actual_outcome": "FAILED with exit code 1, explicitly named sample_input_path:S1 and sample_input_path:S2"
+    },
+    {
+      "test_case": "test_corrupt_mtx_fails_parsing_and_never_emits_ready",
+      "scenario": "Corrupt matrix.mtx provided to reading entrypoint",
+      "expected_outcome": "Throws RuntimeError, writes status='blocked' (delivery_allowed=False), never 'ready'",
+      "actual_outcome": "PASSED: manifest status='blocked', delivery_allowed=False"
+    },
+    {
+      "test_case": "test_multisample_s2_not_parsed_fails",
+      "scenario": "S2 parsed status is False in downstream manifest",
+      "expected_outcome": "FAIL with sample_parsed:S2",
+      "actual_outcome": "FAILED with exit code 1, reported sample_parsed:S2"
+    },
+    {
+      "test_case": "test_multisample_s2_dimension_mismatch_fails",
+      "scenario": "S2 downstream dimensions tampered to 2x2 instead of 3x4",
+      "expected_outcome": "FAIL with sample_dims:S2",
+      "actual_outcome": "FAILED with exit code 1, reported sample_dims:S2"
+    },
+    {
+      "test_case": "test_multisample_s2_file_tampered_fails",
+      "scenario": "S2 barcodes.tsv.gz tampered after package creation",
+      "expected_outcome": "FAIL with checksum:S2:barcodes",
+      "actual_outcome": "FAILED with exit code 1, reported checksum:S2:barcodes"
     }
   ],
   "genuine_multisample_acceptance": {
@@ -55,15 +81,15 @@
   "verification_evidence": {
     "m6_contract_tests": {
       "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py",
-      "result": "29 passed, 1 warning in 19.04s"
+      "result": "30 passed, 1 warning in 19.14s"
     },
     "all_upstream_related_tests": {
       "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py tests/test_prepare_upstream.py tests/test_cli.py tests/test_slurm_runtime_layout.py tests/test_handoff_check.py",
-      "result": "142 passed, 1 warning in 45.94s"
+      "result": "143 passed, 1 warning in 43.79s"
     },
     "full_pytest_suite": {
       "command": "/opt/anaconda3/bin/pytest -q",
-      "result": "617 passed, 26 skipped, 6 warnings in 464.52s (0:07:44), exit code: 0"
+      "result": "618 passed, 26 skipped, 6 warnings in 460.56s (0:07:40), exit code: 0"
     },
     "sbatch_syntax_check": {
       "command": "bash -n slurm/*.sbatch (60 scripts)",
@@ -166,17 +192,17 @@
     }
   ],
   "artifacts_sha256": {
-    "src/ultimate/cli.py": "9ce373ff8ffda508b918ec959b915406d377352e1e19b68969b8b0b489fd5261",
-    "src/ultimate/upstream_acceptance.py": "b4e8d18aae7776c419580f5a76a741c152a2b83d5fc9c43dcd005ce5944054a7",
+    "src/ultimate/cli.py": "fa702872e0282b2d5a24131cfa2f7d4d0418bea38a0e90b2270307da610574d2",
+    "src/ultimate/upstream_acceptance.py": "9bdfb74fc282e31fd536805f825eef1dda136feaf1481ff1f91bd517baacb9c1",
     "src/ultimate/prepare_upstream.py": "66cfcef74faca9b78c45c87d4db4f3fc56f34c4d9d8b97f27ce8bd0799f9bac8",
     "src/ultimate/bulk.py": "cd57ccbf749445ac973284f794b9c1b0051dc1077876f217357f921cc1aa9eae",
     "src/ultimate/pipeline.py": "b7690daf16295712eef3b1fed79cfb2b09972e014fa0750af79d0ff44bf4ce04",
-    "src/ultimate/scrna_smoke.py": "1f575bc3f0716221e7e8d1e07fb3166b2394d25abec0ee3029be8b910f4829ef",
+    "src/ultimate/scrna_smoke.py": "b4f2b673db051ffe806709d375d2db56845e37fe62d4cd3be2851dc8b2da2859",
     "src/ultimate/modules/runner.py": "9be74ccdb544ee6893f4c793bec387e565c9404bf0b59194c93733ff62c6ab85",
     "slurm/upstream_bulk_rnaseq_salmon.sbatch": "eb1437e0b83be9021a78e03700c23d1cd6c63f789c291146d02db8e6b4878d8f",
     "slurm/upstream_scrna_starsolo.sbatch": "df00380d0d332bd3eb9db3b41e2fe76cbb127087c70dd7ca4ed8b1818c493578",
     "slurm/xielab_e2e_regression_suite.sbatch": "f3151ece587a51ccfbf4afda865ab5f9e8a581fd60c275a546b6b8efa120907a",
-    "tests/test_m6_upstream_contract.py": "b9cbc004b1c9b2f2b0ef79216f9ad7fcf734aa55c5c14c03896c588019ef987a"
+    "tests/test_m6_upstream_contract.py": "ff1e72c6bebc0e49f1421df99aeca6830995b5ab4e576f519f91fff4c29f3980"
   },
   "compliance": {
     "foodie_completely_excluded": true,
