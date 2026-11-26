@@ -1,0 +1,159 @@
+{
+  "schema": "ultimate.m6.acceptance.v1",
+  "generated_at": "2026-11-26T04:14:36.425698+00:00",
+  "phase": "M6",
+  "overall_status": "BLOCKED",
+  "status_reason": "P0 interface fixes are complete and locally verified; the P1 cluster runs are blocked because the upstream toolchain, reference indexes, fixtures and submission authorization are all absent.",
+  "baseline_commit": "43d6e7e",
+  "candidate_commit": "c17e50d",
+  "p0_local_fixes": {
+    "status": "pass",
+    "items": [
+      {
+        "id": "P0-A",
+        "title": "artefact path / import config consistency",
+        "status": "pass",
+        "detail": "ARTIFACTS_SUBDIR is the single source for job OUT_DIR and import paths; STARsolo import points at upstream_out/star/<sample>/filtered."
+      },
+      {
+        "id": "P0-B",
+        "title": "single normalised samplesheet consumed by validator and job",
+        "status": "pass",
+        "detail": "samplesheet_normalized.tsv written and consumed; templates reject a non-normalised sheet; duplicate ids, half-pairs, aliases, spaces and non-empty output dirs covered."
+      },
+      {
+        "id": "P0-C",
+        "title": "count semantics stated honestly",
+        "status": "pass",
+        "detail": "count_semantics records salmon NumReads as transcript-level (not gene-level raw integer counts) and STARsolo as integer UMI counts."
+      },
+      {
+        "id": "P0-D",
+        "title": "strict acceptance checker",
+        "status": "pass",
+        "detail": "ultimate check-upstream-acceptance fails on any missing/skipped/blocked/failed required check and writes M6_ACCEPTANCE.json; local small-scale verification via tests."
+      },
+      {
+        "id": "P0-E",
+        "title": "auxiliary e2e suite no longer lenient",
+        "status": "pass",
+        "detail": "exits non-zero on any non-ready stage; M6 checker is the final gate."
+      }
+    ]
+  },
+  "pytest": {
+    "command": "/opt/anaconda3/bin/pytest -q",
+    "summary": "608 passed, 26 skipped, 0 failed",
+    "duration_seconds": 868.28,
+    "exit_code": 0
+  },
+  "cluster_preconditions": {
+    "slurm": {
+      "account": {
+        "value": "xielab",
+        "status": "confirmed"
+      },
+      "partition": {
+        "value": "compute_pro",
+        "status": "confirmed"
+      },
+      "qos": {
+        "value": "normal",
+        "status": "confirmed"
+      }
+    },
+    "environment": {
+      "micromamba": {
+        "path": "/dshare/xielab/analysisdata/TFC/shennq/ultimate_runtime/micromamba/bin/micromamba",
+        "status": "present"
+      },
+      "ultimate_upstream_env": {
+        "path": "/dshare/xielab/analysisdata/TFC/shennq/ultimate_runtime/envs/ultimate-upstream",
+        "status": "missing",
+        "reason": "not built yet; only ultimate-core, ultimate-celltypist-20260910 and two scrna-smoke envs exist"
+      },
+      "tools": {
+        "fastp": "missing",
+        "salmon": "missing",
+        "STAR": "missing",
+        "fastqc": "missing",
+        "multiqc": "missing",
+        "featureCounts": "missing",
+        "samtools": "missing",
+        "alevin-fry": "missing"
+      }
+    },
+    "reference_index": {
+      "salmon_index": {
+        "status": "missing",
+        "reason": "no salmon index under ultimate_runtime/cache or site reference root"
+      },
+      "star_index": {
+        "status": "missing",
+        "reason": "no STAR genome index; building a full genome index is explicitly out of scope for M6"
+      }
+    },
+    "fixtures": {
+      "status": "missing",
+      "reason": "no frozen synthetic fixture or licensed public small sample staged; the raw data parent tree is empty and strictly read-only",
+      "raw_root": "/dshare/xielab/rawdata/TFC/shennq"
+    },
+    "submission_authorization": {
+      "status": "not_granted",
+      "reason": "P1 slurm submission requires explicit owner approval per M6 instructions"
+    }
+  },
+  "p1_routes": [
+    {
+      "route": "bulk_rnaseq_salmon",
+      "status": "blocked",
+      "job_id": null,
+      "blocked_by": [
+        "ultimate_upstream_env missing",
+        "salmon index missing",
+        "fixture missing",
+        "submission authorization not granted"
+      ],
+      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal <job_id>/config/upstream/run_upstream.sbatch"
+    },
+    {
+      "route": "scrna_starsolo",
+      "status": "blocked",
+      "job_id": null,
+      "blocked_by": [
+        "ultimate_upstream_env missing",
+        "STAR index missing",
+        "barcode whitelist missing",
+        "fixture missing",
+        "submission authorization not granted"
+      ],
+      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal <job_id>/config/upstream/run_upstream.sbatch"
+    }
+  ],
+  "artifacts_sha256": {
+    "src/ultimate/prepare_upstream.py": "6570ec363f29c350bbd3813c383ea7c4a95888035c5d154e8541458688b95b4b",
+    "src/ultimate/upstream_acceptance.py": "9bea9f663e371cdfb1c830397ee0fe9075b678e1bb95fd37dc3f6b15970a0b20",
+    "slurm/upstream_bulk_rnaseq_salmon.sbatch": "fe5f11c022cd9ec227113d5485b54225893e9fca8637d0dc897d22b3bc2054fa",
+    "slurm/upstream_scrna_starsolo.sbatch": "5ab455854481b016b42e73721be764c9aa156fbeeb5f9dffcf2db318f6769024",
+    "slurm/xielab_e2e_regression_suite.sbatch": "f3151ece587a51ccfbf4afda865ab5f9e8a581fd60c275a546b6b8efa120907a",
+    "tests/test_m6_upstream_contract.py": "1363ae1cd07f67301dd5019b3cde4b40db6ee7172c93450397575bafd2f81999"
+  },
+  "logs": {
+    "pytest": "/tmp/m6_full.log",
+    "p0_verification": "see tests/test_m6_upstream_contract.py"
+  },
+  "compliance": {
+    "foodie_excluded": true,
+    "no_patient_data": true,
+    "no_full_scale_run": true,
+    "no_shared_input_modified": true,
+    "no_auto_submit": true,
+    "no_push": true,
+    "delivery_allowed_expected_false": true
+  },
+  "next_actions_require_owner": [
+    "approve building ultimate-upstream env (sbatch slurm/xielab_setup_upstream_env.sbatch)",
+    "provide or approve a frozen synthetic fixture and a pre-validated small salmon/STAR index",
+    "approve the two minimal chain submissions"
+  ]
+}
