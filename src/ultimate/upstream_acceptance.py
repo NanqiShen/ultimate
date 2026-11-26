@@ -418,6 +418,7 @@ def check_downstream_consumed(
     expected_inputs: list[Path] | Path,
     expected_dimensions: dict[str, int] | None = None,
     expected_sample_dimensions: dict[str, dict[str, int]] | None = None,
+    expected_sample_paths: dict[str, Path] | None = None,
 ) -> dict[str, Any]:
     """Prove Ultimate actually read *this* upstream artefact in this run with runtime evidence."""
     run_manifest_path = Path(run_manifest_path)
@@ -496,7 +497,27 @@ def check_downstream_consumed(
                 STATUS_PASS if is_parsed else STATUS_FAIL,
                 f"sample {sample_id} parsed={is_parsed}",
             )
-            # b) Dimension reconciliation
+
+            # b) sample_id -> input_path binding check
+            exp_s_dir = None
+            if expected_sample_paths and sample_id in expected_sample_paths:
+                exp_s_dir = Path(expected_sample_paths[sample_id]).resolve()
+            else:
+                for exp_item in expected_inputs:
+                    if exp_item.is_dir():
+                        inferred_id = exp_item.parent.name if exp_item.name == "filtered" else exp_item.name
+                        if inferred_id == sample_id:
+                            exp_s_dir = Path(exp_item).resolve()
+                            break
+            down_s_path = Path(str(s_rec.get("input_path"))).resolve() if (s_rec and s_rec.get("input_path")) else None
+            path_bound = bool(exp_s_dir and down_s_path and exp_s_dir == down_s_path)
+            acceptance.add(
+                f"{prefix}:sample_input_path:{sample_id}",
+                STATUS_PASS if path_bound else STATUS_FAIL,
+                f"sample {sample_id} input_path expected {exp_s_dir} got {down_s_path}",
+            )
+
+            # c) Dimension reconciliation
             if s_rec:
                 s_genes = s_rec.get("n_genes")
                 s_cells = s_rec.get("n_cells")
@@ -512,25 +533,19 @@ def check_downstream_consumed(
                     STATUS_FAIL,
                     f"sample {sample_id} missing in downstream samples manifest",
                 )
-            # c) Checksum check for triad files of this sample
-            s_dir = None
-            for exp_item in expected_inputs:
-                if exp_item.is_dir():
-                    inferred_id = exp_item.parent.name if exp_item.name == "filtered" else exp_item.name
-                    if inferred_id == sample_id:
-                        s_dir = exp_item
-                        break
-            if s_dir is None:
+
+            # d) Checksum check for triad files of this sample
+            if exp_s_dir is None:
                 acceptance.add(f"{prefix}:sample_triad_dir:{sample_id}", STATUS_MISSING, f"upstream directory for {sample_id} not found")
             else:
                 for role, stem in (("matrix", "matrix.mtx"), ("barcodes", "barcodes.tsv"), ("features", "features.tsv")):
                     cand_file = None
                     for ext in (".gz", ""):
-                        if (s_dir / f"{stem}{ext}").is_file():
-                            cand_file = s_dir / f"{stem}{ext}"
+                        if (exp_s_dir / f"{stem}{ext}").is_file():
+                            cand_file = exp_s_dir / f"{stem}{ext}"
                             break
                     if cand_file is None:
-                        acceptance.add(f"{prefix}:checksum:{sample_id}:{role}", STATUS_MISSING, f"file {stem} missing in {s_dir}")
+                        acceptance.add(f"{prefix}:checksum:{sample_id}:{role}", STATUS_MISSING, f"file {stem} missing in {exp_s_dir}")
                         continue
                     actual_sha = sha256_file(cand_file)
                     cand_resolved = str(cand_file.resolve())

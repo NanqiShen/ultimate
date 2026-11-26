@@ -684,6 +684,42 @@ def test_multisample_s2_file_tampered_fails(tmp_path: Path):
     assert "checksum:S2:barcodes" in res.output
 
 
+def test_multisample_swapped_s1_s2_input_paths_fails(tmp_path: Path):
+    """Codex requirement: Swapping S1 and S2 input_path must fail and name the mismatched samples."""
+    runner = CliRunner()
+    _fastq(tmp_path / "star" / "fastq" / "S2_R1.fastq.gz")
+    _fastq(tmp_path / "star" / "fastq" / "S2_R2.fastq.gz")
+    sheet_star = _sheet(
+        tmp_path / "star",
+        header="sample\tfastq_1\tfastq_2",
+        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
+              "S2\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
+    )
+    pkg_star = _package(tmp_path / "star", "starsolo", samplesheet=sheet_star)
+    sdirs, m_valid = _setup_valid_starsolo(pkg_star, samples=("S1", "S2"))
+    tampered = json.loads(m_valid.read_text(encoding="utf-8"))
+
+    # Only swap S1 and S2 input_path!
+    s1_path = str(sdirs[0].resolve())
+    s2_path = str(sdirs[1].resolve())
+    for s in tampered.get("samples", []):
+        if s.get("sample_id") == "S1":
+            s["input_path"] = s2_path
+        elif s.get("sample_id") == "S2":
+            s["input_path"] = s1_path
+
+    m_swapped = tmp_path / "m_swapped_paths.json"
+    m_swapped.write_text(json.dumps(tampered), encoding="utf-8")
+
+    res = runner.invoke(
+        main,
+        ["check-upstream-acceptance", "--package-dir", str(pkg_star), "--downstream-manifest", str(m_swapped), "--allow-single-route"],
+    )
+    assert res.exit_code != 0
+    # Must fail and explicitly name the mismatched sample(s)
+    assert "sample_input_path:S1" in res.output or "sample_input_path:S2" in res.output
+
+
 def test_m6_counterexample_missing_required_route(tmp_path: Path):
     """Single route fails final M6 acceptance under default require-both-routes."""
     pkg_salmon = _package(tmp_path / "s", "salmon")
