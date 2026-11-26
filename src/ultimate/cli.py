@@ -256,10 +256,16 @@ def handoff_check_command(root: Path, output_dir: Path | None) -> None:
 
 
 @main.command("check-upstream-acceptance")
-@click.option("--package-dir", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True, help="prepare-upstream package directory.")
-@click.option("--downstream-manifest", type=click.Path(path_type=Path, dir_okay=False), required=True, help="run_manifest.json produced by the downstream Ultimate run.")
+@click.option("--package-dir", "package_dirs", type=click.Path(path_type=Path, exists=True, file_okay=False), multiple=True, required=True, help="prepare-upstream package directory (can be specified multiple times).")
+@click.option("--downstream-manifest", "downstream_manifests", type=click.Path(path_type=Path, dir_okay=False), multiple=True, required=True, help="run_manifest.json produced by the downstream Ultimate run (can be specified multiple times).")
 @click.option("--output", "output_path", type=click.Path(path_type=Path), default=None, help="Where to write the acceptance JSON.")
-def check_upstream_acceptance_command(package_dir: Path, downstream_manifest: Path, output_path: Path | None) -> None:
+@click.option("--require-both-routes/--allow-single-route", default=True, show_default=True, help="Require both salmon and starsolo routes for final M6 sign-off.")
+def check_upstream_acceptance_command(
+    package_dirs: tuple[Path, ...],
+    downstream_manifests: tuple[Path, ...],
+    output_path: Path | None,
+    require_both_routes: bool,
+) -> None:
     """Strictly validate an upstream -> import -> run chain (non-zero on any gap)."""
     from ultimate.upstream_acceptance import (
         RouteAcceptance,
@@ -267,53 +273,92 @@ def check_upstream_acceptance_command(package_dir: Path, downstream_manifest: Pa
         check_expected_files,
         check_matrix_contract,
         check_sample_count_agreement,
+        check_salmon_quant_reconciliation,
         check_10x_directory,
         evaluate,
         exit_code,
         write_acceptance,
     )
+    import pandas as pd
 
-    package_dir = package_dir.resolve()
-    manifest_path = package_dir / "job_package_manifest.json"
-    if not manifest_path.is_file():
-        raise click.ClickException(f"not a prepare-upstream package: {package_dir}")
-    package = json.loads(manifest_path.read_text(encoding="utf-8"))
-    route = str(package.get("route") or "")
-    artifacts_dir = package_dir / "upstream_out"
-    acceptance = RouteAcceptance(route=route or "unknown")
+    # Match each package directory with its corresponding downstream manifest
+    packages: list[dict[str, Any]] = []
+    for p_dir in package_dirs:
+        p_path = p_dir.resolve()
+        m_path = p_path / "job_package_manifest.json"
+        if not m_path.is_file():
+            raise click.ClickException(f"not a prepare-upstream package: {p_path}")
+        pkg_data = json.loads(m_path.read_text(encoding="utf-8"))
+        packages.append({"dir": p_path, "route": str(pkg_data.get("route") or ""), "data": pkg_data})
 
-    check_expected_files(acceptance, "package", [
-        package_dir / "run_upstream.sbatch",
-        package_dir / "expected_import_project.yaml",
-        package_dir / "checksum_manifest.tsv",
-        package_dir / "samplesheet_normalized.tsv",
-    ])
-    normalized = package_dir / "samplesheet_normalized.tsv"
-    if route == "salmon":
-        matrix = artifacts_dir / "counts_raw.tsv"
-        check_expected_files(acceptance, "upstream", [matrix, artifacts_dir / "import_config.yaml"])
-        if matrix.is_file() and normalized.is_file():
-            expected = check_sample_count_agreement(acceptance, "upstream", matrix, normalized)
-            check_matrix_contract(acceptance, "upstream", matrix, expected_samples=expected)
-        check_downstream_consumed(
-            acceptance, "downstream", downstream_manifest,
-            expected_input=matrix if matrix.is_file() else artifacts_dir,
-        )
-    elif route == "starsolo":
-        import pandas as pd
+    manifest_map: dict[str, Path] = {}
+    remaining_manifests = [m.resolve() for m in downstream_manifests]
 
-        samples = pd.read_csv(normalized, sep="\t")["sample_id"].astype(str).tolist() if normalized.is_file() else []
-        for sample in samples:
-            check_10x_directory(acceptance, f"upstream:{sample}", artifacts_dir / "star" / sample / "filtered")
-        check_downstream_consumed(
-            acceptance, "downstream", downstream_manifest,
-            expected_input=artifacts_dir / "star" / (samples[0] if samples else "sample") / "filtered",
-        )
+    # If 1-to-1 matching
+    if len(packages) == 1 and len(remaining_manifests) == 1:
+        manifest_map[packages[0]["route"]] = remaining_manifests[0]
     else:
-        acceptance.add("route_supported", "fail", f"unsupported route: {route}")
+        for m_file in remaining_manifests:
+            try:
+                m_payload = json.loads(m_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            text = json.dumps(m_payload).lower()
+            if "salmon" in text or "rnaseq" in text:
+                manifest_map["salmon"] = m_file
+            elif "starsolo" in text or "scrna" in text or "star" in text:
+                manifest_map["starsolo"] = m_file
 
-    payload = evaluate([acceptance])
-    target = (output_path or (package_dir / "M6_ACCEPTANCE.json")).resolve()
+    route_acceptances: list[RouteAcceptance] = []
+    for pkg_item in packages:
+        route = pkg_item["route"]
+        pkg_dir = pkg_item["dir"]
+        artifacts_dir = pkg_dir / "upstream_out"
+        acceptance = RouteAcceptance(route=route or "unknown")
+        route_acceptances.append(acceptance)
+
+        check_expected_files(acceptance, "package", [
+            pkg_dir / "run_upstream.sbatch",
+            pkg_dir / "expected_import_project.yaml",
+            pkg_dir / "checksum_manifest.tsv",
+            pkg_dir / "samplesheet_normalized.tsv",
+        ])
+        normalized = pkg_dir / "samplesheet_normalized.tsv"
+
+        downstream_manifest = manifest_map.get(route)
+        if downstream_manifest is None:
+            acceptance.add("downstream_manifest_provided", "fail", f"no downstream manifest matched for route {route}")
+            continue
+
+        if route == "salmon":
+            matrix = artifacts_dir / "counts_raw.tsv"
+            check_expected_files(acceptance, "upstream", [matrix, artifacts_dir / "import_config.yaml"])
+            if matrix.is_file() and normalized.is_file():
+                expected_samples = check_sample_count_agreement(acceptance, "upstream", matrix, normalized)
+                check_matrix_contract(acceptance, "upstream", matrix, expected_samples=expected_samples)
+                check_salmon_quant_reconciliation(acceptance, "upstream", matrix, artifacts_dir, expected_samples)
+            check_downstream_consumed(
+                acceptance, "downstream", downstream_manifest,
+                expected_inputs=matrix if matrix.is_file() else artifacts_dir,
+            )
+        elif route == "starsolo":
+            samples = pd.read_csv(normalized, sep="\t")["sample_id"].astype(str).tolist() if normalized.is_file() else []
+            expected_sample_dirs: list[Path] = []
+            for sample in samples:
+                s_dir = artifacts_dir / "star" / sample / "filtered"
+                expected_sample_dirs.append(s_dir)
+                check_10x_directory(acceptance, f"upstream:{sample}", s_dir)
+
+            check_downstream_consumed(
+                acceptance, "downstream", downstream_manifest,
+                expected_inputs=expected_sample_dirs if expected_sample_dirs else artifacts_dir,
+            )
+        else:
+            acceptance.add("route_supported", "fail", f"unsupported route: {route}")
+
+    required_routes = ("salmon", "starsolo") if require_both_routes else ()
+    payload = evaluate(route_acceptances, required_routes=required_routes)
+    target = (output_path or (packages[0]["dir"] / "M6_ACCEPTANCE.json")).resolve()
     write_acceptance(target, payload)
     click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
     raise click.exceptions.Exit(exit_code(payload))
