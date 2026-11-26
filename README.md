@@ -527,8 +527,13 @@ V4.2 moves from audit completeness to a controlled raw/standard-input customer
 rehearsal. The intended path is:
 
 ```text
-triage -> prepare-job -> preflight -> raw-upstream-evidence -> run -> customer-package -> delivery-check -> batch-status
+triage -> prepare-job -> preflight -> prepare-upstream -> raw-upstream-evidence -> run -> customer-package -> delivery-check -> batch-status
 ```
+
+`prepare-upstream` sits between `preflight` and `raw-upstream-evidence`: it turns a
+FASTQ samplesheet plus a reference index into a reviewable Slurm job package, and
+only after that job produces a standard matrix/object does `raw-upstream-evidence`
+(and then `run`) become meaningful.
 
 Two new CLI surfaces support that path:
 
@@ -558,6 +563,58 @@ command. If that dependency is missing, the raw stage must write a blocked
 manifest and `failure_recovery.md`; it must not silently fall back to fake
 evidence. V4.2 remains a controlled customer-delivery rehearsal, not a real
 customer data release.
+
+
+### Self-hosted open-source upstream (XieLab)
+
+XieLab's `compute_pro` has no pre-installed `nextflow` / `apptainer` / `cellranger`,
+so Ultimate can build its own upstream route with `micromamba` instead of relying
+on nf-core handoff. This route **never submits Slurm itself**: it writes a job
+package for human review.
+
+```bash
+# bulk RNA-seq: fastp QC -> salmon quant -> counts_raw.tsv
+ultimate prepare-upstream --route salmon \
+  --samplesheet <fastq_samplesheet.tsv> \
+  --index <salmon_index_dir> \
+  --output-dir jobs/<job_id>/config/upstream
+
+# scRNA-seq: STAR --soloType CB_UMI_Simple -> standard 10x filtered/
+ultimate prepare-upstream --route starsolo \
+  --samplesheet <fastq_samplesheet.tsv> \
+  --index <star_genome_index_dir> \
+  --output-dir jobs/<job_id>/config/upstream
+```
+
+The package always contains four reviewable artefacts:
+
+| Artefact | Purpose |
+| --- | --- |
+| `run_upstream.sbatch` | Executable Slurm job script (not auto-submitted); `#SBATCH` directives sit in the leading comment block and `--cpus-per-task` matches the thread budget |
+| `expected_import_project.yaml` | The project config expected *after* the upstream job succeeds |
+| `checksum_manifest.tsv` | SHA-256 of every input FASTQ, all marked `read_only=true` |
+| `job_package_manifest.json` | Route, samplesheet, index, threads, `auto_submitted=false` |
+
+**Six blocking conditions** (the package is `status=blocked` and `run_upstream.sbatch`
+is not written): missing samplesheet, empty samplesheet, missing FASTQ,
+non-FASTQ extension, missing index, index markers not matching the route
+(`salmon`: `info.json`/`versionInfo.json`; `starsolo`: `SAindex`/`Genome`), plus
+refusing an output directory inside the read-only raw tree (`ULTIMATE_RAW_ROOT`).
+
+Four Slurm templates back this route:
+
+| Template | Purpose |
+| --- | --- |
+| `slurm/xielab_setup_upstream_env.sbatch` | Build `$ULTIMATE_RUNTIME_ROOT/envs/ultimate-upstream` (fastqc/multiqc/fastp/salmon/star/subread/samtools/alevin-fry) |
+| `slurm/upstream_bulk_rnaseq_salmon.sbatch` | fastp -> salmon quant -> `counts_raw.tsv` + `import_config.yaml` + `raw_qc_manifest.json` |
+| `slurm/upstream_scrna_starsolo.sbatch` | STARsolo -> standard 10x `filtered/` + `import_config.yaml` |
+| `slurm/xielab_e2e_regression_suite.sbatch` | XieLab end-to-end regression (doctor -> bulk -> scRNA -> proteomics/survival -> validation-index/audit-production) writing a Chinese `xielab_e2e_report.md` |
+
+All four use `account=xielab`, `partition=compute_pro`, `qos=normal`, bind threads
+to `$SLURM_CPUS_PER_TASK`, and treat raw FASTQ as strictly read-only. See
+[docs/XIELAB_OPERATIONS.md](docs/XIELAB_OPERATIONS.md) for the full deployment
+manual.
+
 
 ### Realistic Pilot Suite
 
@@ -643,8 +700,14 @@ V3.5 的接单前入口会区分标准输入和上游原始输入：
 
 - matrix/object/table 输入，例如 count matrix、10x matrix、h5ad、h5mu、
   abundance table、beta matrix，可以进入 `prepare-job` 和 `preflight`。
-- FASTQ、BCL、fragments 等 raw upstream 输入只生成 handoff 方案；它们不会被
-  triage 标成可直接完成分析。
+- FASTQ、BCL、fragments 等 raw upstream 输入**不会**被 triage 标成可直接完成
+  分析；triage 会同时给出两条可选路线：
+  1. **nf-core handoff**（默认）：导出 samplesheet/params/nextflow.config，由人工在
+     具备 nextflow + apptainer 的环境执行；
+  2. **自建开源上游**（`ultimate prepare-upstream --route salmon|starsolo`）：在没有
+     nextflow/apptainer 的 `compute_pro` 上，用 `fastp`+`salmon` 或 `STARsolo` 生成
+     标准矩阵/10x 目录，并产出可人工复核的 Slurm 作业包。
+  两条路线都**只生成方案/作业包，不会自动提交 Slurm**。
 - `slurm_command.txt` 只给出 `prepare-job` 和生成后 job sbatch 的命令草稿，
   不再直接把 `project.yaml` 作为额外参数塞给全局 Slurm wrapper。
 

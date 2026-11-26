@@ -1,6 +1,6 @@
 # Ultimate 当前状态基线
 
-更新时间：2026-06-04
+更新时间：2026-11-26（M1–M5 合并后基线）
 
 ## 服务器基线
 
@@ -31,8 +31,39 @@
 - demo/synthetic/smoke 结果不得作为正式交付证据。
 - 高级工具若只完成输入准备或可用性检测，必须写成 `handoff`、`optional backend` 或 `adapter`。
 
+## M1–M5 合并后能力状态（2026-11）
+
+- **谱系与路径层（M1）**：XieLab TFC 7 个提交已合入统一基线；`paths.py` 同时提供
+  `project_root/resource_root/external_root` 与 `runtime_root/environment_root/cache_root`，
+  `default_platform_root`/`default_environment_root` 保留为别名。代码根与 `ultimate_runtime`
+  同级，环境不再硬编码 `.conda/envs`。
+- **运行底座（M2）**：`env_router.resolve_rscript` 四层优先级（模块配置 → `ULTIMATE_R_ENV_*`/
+  `ULTIMATE_RSCRIPT` → `environment_root()/<env>/bin/Rscript` → `PATH`）；显式配置无效时报错
+  而非静默换解释器。wheel 打包已覆盖 `scripts/R/*.R`、`config/default.yaml`、Slurm 模板与环境定义。
+- **统计严谨性（M3）**：所有固定指数生存曲线已删除，改由 `survival_backend` 计算真实
+  KM/Log-rank/Cox（lifelines 或 R `survival`，两者皆缺时显式 `skipped`）。Python 侧两样本检验
+  改为 Welch t（`scipy.stats.ttest_ind(equal_var=False)` + Welch df + BH FDR），缺 scipy 时标注
+  `normal_approx_fallback_not_for_production`。伪 WGCNA 四分位分箱已删除，改为真实
+  `pickSoftThreshold` + `blockwiseModules`（样本 < 15 或缺包显式 `skipped`）。Python 不再向
+  `.rds`/`.RData` 写 JSON。`report.html` 增加顶部摘要卡片、`<img>` 图表网格、Top 10 预览与
+  解释边界框，并支持 `report.embed_images: true` 单文件内嵌。
+- **单细胞与多组学纵深（M4）**：Harmony 批次校正（`X_pca_harmony` + `batch_integration_metrics.tsv`
+  含 kNN 批次熵/iLISI 近似与 cluster 保持度 + `umap_batch_before_after.png`，缺 harmonypy 显式
+  `skipped`）；配对 `edgeR` pseudobulk DE 已进入 `ultimate run` 主流水线并注册到
+  `advanced_backend_execution.tsv`；CopyKAT 具备**三层闸**（显式开关 + raw integer count 门禁 +
+  `thread_budget` 传 `--ncores`）；新增本地 GMT 富集 `enrichment_backend`（拒绝远程 URL，
+  无 GMT 显式 `skipped`，不联网）；空间邻域统计优先真实 `squidpy.gr`（记录真实版本与
+  `execution_mode=real_squidpy_gr`），缺失时降级并标注 `fallback_no_permutation_pvalue`。
+- **开源上游与回归套件（M5）**：新增 `ultimate prepare-upstream --route salmon|starsolo`，生成
+  `run_upstream.sbatch` / `expected_import_project.yaml` / `checksum_manifest.tsv` /
+  `job_package_manifest.json` 四件产物（只生成、不自动提交），六类输入/索引问题明确 `blocked`；
+  `envs/xielab.upstream.yml` 与 `slurm/xielab_setup_upstream_env.sbatch` 支持在
+  `compute_pro` 上自建 fastp/salmon/STAR 工具链；`slurm/xielab_e2e_regression_suite.sbatch`
+  串联 doctor → bulk → scRNA → 蛋白/生存 → validation-index/audit-production 并输出中文
+  `xielab_e2e_report.md`。部署细节见 `docs/XIELAB_OPERATIONS.md`。
+
 ## 下一推进点
 
-- 下一优先级：把 CopyKAT 或 inferCNV 从“raw-count 输入准备完成”推进到完整 backend 执行，建议先小抽样 CopyKAT，再扩展到 inferCNV。
+- 下一优先级：CopyKAT 已具备 raw-count 门禁、R 脚本与 `--ncores` 线程绑定（M4），但仍**未在集群实跑**；下一步是在 `xielab` 上以显式开关 + 小抽样完成首次真实执行，再扩展到 inferCNV。
 - 备选方向：scATAC/Multiome fragments-level 验证、CellChat/NicheNet 通讯专项、clinical association/survival 模板。
 - 真实或较重计算继续通过 Slurm 提交，不在登录节点运行。

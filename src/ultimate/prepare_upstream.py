@@ -151,6 +151,16 @@ def _validate_inputs(
     return blockers
 
 
+def _is_inside(candidate: Path, parent: Path) -> bool:
+    """True when ``candidate`` is ``parent`` itself or nested below it."""
+    try:
+        candidate_resolved = candidate.resolve()
+        parent_resolved = parent.resolve()
+    except OSError:
+        return False
+    return candidate_resolved == parent_resolved or parent_resolved in candidate_resolved.parents
+
+
 def _checksum(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -289,8 +299,22 @@ def prepare_upstream_package(
 
     input_blockers = _validate_inputs(rows, fastq_base, index_path, route_key)
     raw_root = os.environ.get("ULTIMATE_RAW_ROOT", "")
-    if raw_root and str(output_dir).startswith(str(Path(raw_root).resolve())):
-        input_blockers.append("output_dir_inside_read_only_raw_tree")
+    if raw_root:
+        resolved_raw = Path(raw_root).resolve()
+        if _is_inside(output_dir, resolved_raw):
+            input_blockers.append("output_dir_inside_read_only_raw_tree")
+    # FASTQ directories are inputs: writing the package inside the directory that
+    # actually holds the reads would risk polluting a curated input tree even
+    # when ULTIMATE_RAW_ROOT is unset. Only the resolved FASTQ parents count, so
+    # an output directory beside the samplesheet stays allowed.
+    fastq_parents = {
+        _resolve_fastq(row[key], fastq_base).parent
+        for row in rows
+        for key in ("fastq_1", "fastq_2")
+        if row.get(key) and row.get(key) != "-"
+    }
+    if any(_is_inside(output_dir, parent) for parent in fastq_parents):
+        input_blockers.append("output_dir_inside_fastq_input_tree")
     if input_blockers:
         result.blocked_reason = input_blockers[0]
         result.blockers = input_blockers

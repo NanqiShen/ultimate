@@ -217,6 +217,55 @@ def test_empty_samplesheet_blocks(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
+def test_output_dir_inside_read_only_raw_tree_blocks(tmp_path: Path, monkeypatch):
+    """Writing a package into the read-only raw tree must be refused."""
+    raw_root = tmp_path / "rawdata"
+    raw_root.mkdir()
+    (raw_root / "fastq").mkdir()
+    samplesheet = tmp_path / "samplesheet.tsv"
+    _make_fastq(tmp_path / "fastq" / "S1_R1.fastq.gz")
+    samplesheet.write_text("sample\tfastq_1\nS1\tfastq/S1_R1.fastq.gz\n", encoding="utf-8")
+    monkeypatch.setenv("ULTIMATE_RAW_ROOT", str(raw_root))
+    output_dir = raw_root / "pkg"
+
+    result = prepare_upstream_package(
+        route="salmon", samplesheet=samplesheet, output_dir=output_dir,
+        index=_make_salmon_index(tmp_path / "index"),
+    )
+
+    assert result.status == "blocked"
+    assert "output_dir_inside_read_only_raw_tree" in result.blockers
+    assert result.blocked_reason == "output_dir_inside_read_only_raw_tree"
+    assert not (output_dir / "run_upstream.sbatch").exists()
+
+
+def test_output_dir_inside_fastq_input_tree_blocks(tmp_path: Path):
+    """Even without ULTIMATE_RAW_ROOT, never write beside the input FASTQs."""
+    samplesheet = _samplesheet(tmp_path)
+    fastq_dir = tmp_path / "fastq"
+
+    result = prepare_upstream_package(
+        route="salmon", samplesheet=samplesheet, output_dir=fastq_dir / "pkg",
+        index=_make_salmon_index(tmp_path / "index"),
+    )
+
+    assert result.status == "blocked"
+    assert "output_dir_inside_fastq_input_tree" in result.blockers
+    assert not (fastq_dir / "pkg" / "run_upstream.sbatch").exists()
+
+
+def test_output_dir_outside_raw_tree_is_allowed(tmp_path: Path, monkeypatch):
+    raw_root = tmp_path / "rawdata"
+    raw_root.mkdir()
+    monkeypatch.setenv("ULTIMATE_RAW_ROOT", str(raw_root))
+    result = prepare_upstream_package(
+        route="salmon", samplesheet=_samplesheet(tmp_path), output_dir=tmp_path / "pkg",
+        index=_make_salmon_index(tmp_path / "index"),
+    )
+    assert result.status == "ready", result.blocked_reason
+    assert Path(result.artifacts["run_upstream_sbatch"]).is_file()
+
+
 def test_missing_index_blocks(tmp_path: Path):
     result = prepare_upstream_package(
         route="salmon", samplesheet=_samplesheet(tmp_path), output_dir=tmp_path / "pkg", index=None,
@@ -378,3 +427,29 @@ def test_operations_doc_exists_and_documents_key_facts():
     # the intended negative statement and is allowed.
     assert "/shared/shen" not in text
     assert "hpc-sbatch" not in text.replace("集群**没有** `hpc-sbatch` / `hpc-run`", "")
+
+
+
+def test_readme_documents_prepare_upstream_route():
+    """README must keep advertising the self-hosted upstream route (M5)."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "prepare-upstream" in readme
+    for artefact in ("run_upstream.sbatch", "expected_import_project.yaml", "checksum_manifest.tsv", "job_package_manifest.json"):
+        assert artefact in readme, artefact
+    for template in (
+        "xielab_setup_upstream_env.sbatch",
+        "upstream_bulk_rnaseq_salmon.sbatch",
+        "upstream_scrna_starsolo.sbatch",
+        "xielab_e2e_regression_suite.sbatch",
+    ):
+        assert template in readme, template
+    # The two routes must be described as coexisting, never handoff-only.
+    assert "nf-core handoff" in readme
+    assert "自建开源上游" in readme
+
+
+def test_current_state_documents_m4_m5_capabilities():
+    text = (REPO_ROOT / "docs" / "CURRENT_STATE.md").read_text(encoding="utf-8")
+    for fact in ("Harmony", "batch_integration_metrics", "CopyKAT", "enrichment", "squidpy", "prepare-upstream", "xielab_e2e"):
+        assert fact in text, fact
+    assert "2026-11" in text
