@@ -46,7 +46,12 @@ fi
 FASTQ_DIR="${FASTQ_DIR:-$(dirname -- "$SAMPLESHEET")}"
 mkdir -p "$OUT_DIR"/{logs,star,tables}
 
-echo "[upstream_scrna] samplesheet=$SAMPLESHEET"
+if [[ "$(head -1 "$SAMPLESHEET")" != $'sample_id\tfastq_1\tfastq_2\tstrandedness' ]]; then
+  echo "[upstream_scrna] SAMPLESHEET is not the normalised table: $SAMPLESHEET" >&2
+  echo "Regenerate the package with: ultimate prepare-upstream ..." >&2
+  exit 2
+fi
+echo "[upstream_scrna] samplesheet=$SAMPLESHEET (normalised)"
 echo "[upstream_scrna] index=$INDEX"
 echo "[upstream_scrna] out_dir=$OUT_DIR threads=$THREADS"
 
@@ -144,7 +149,7 @@ upstream_route: open_source_starsolo
 notes: STARsolo CB_UMI_Simple output reshaped into the standard 10x filtered/ layout.
 YAML
   echo -e "${sample}\t$OUT_DIR/import_config_${sample}.yaml" >> "$OUT_DIR/tables/import_configs.txt"
-done < <(awk -F'\t' 'NR>1 && $1!="" {print $1"\t"$2"\t"$3"\t"$4}' "$SAMPLESHEET")
+done < <(tail -n +2 "$SAMPLESHEET")
 
 python3 - "$OUT_DIR" <<'PY'
 import json, sys

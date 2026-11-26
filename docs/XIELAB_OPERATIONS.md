@@ -112,6 +112,26 @@ ULTIMATE_ROOT=/dshare/xielab/analysisdata/TFC/shennq/ultimate \
 
 套件在 `$ULTIMATE_RUNTIME_ROOT/validations/xielab_e2e_<timestamp>/` 下串联 doctor → bulk RNA-seq → scRNA → 蛋白/生存 → validation-index/audit-production，并输出中文报告 `xielab_e2e_report.md`。
 
-判定规则：
-- 有 `failed` 阶段 → 回归**未通过**。
-- `skipped` 必须带原因（缺公开数据 / 缺依赖 / 缺环境），不得当作通过。
+判定规则（M6 起为严格契约）：
+- 任一阶段不是 `ready`（含 `failed` / `blocked` / `skipped`）→ 套件**退出非 0**。
+  仅在刻意演练时可用 `ULTIMATE_E2E_ALLOW_SKIP=1` 临时放行。
+- 该五阶段套件只是**辅助回归**，M6 的最终判据是独立严格验收器：
+
+```bash
+ultimate check-upstream-acceptance \
+  --package-dir <prepare-upstream 生成的包目录> \
+  --downstream-manifest <下游 run_manifest.json>
+```
+
+验收器逐项检查：作业包产物、`upstream_out/` 实际矩阵路径、样本列与规范化样本表
+一致、特征 ID 唯一、数值有限非负、非零信号、STARsolo 的 `filtered/` 目录维度与
+feature/barcode 数相符、以及**下游确实消费了本次产物**。任一必需检查缺失、
+跳过、阻塞或失败，整体退出非 0，并写出 `M6_ACCEPTANCE.json`。
+
+### 计数语义（不得夸大）
+
+- `--route salmon` 的 `counts_raw.tsv` 是 **salmon 转录本级 `NumReads` 四舍五入后的整数**，
+  **不是基因级原始整数计数**；原始 `quant/<sample>/quant.sf` 必须保留，做基因级差异
+  分析前需先做转录本→基因汇总。
+- `--route starsolo` 输出的是 **STARsolo UMI 计数**（非负整数），格式为标准 10x
+  `filtered/matrix.mtx(.gz)`。

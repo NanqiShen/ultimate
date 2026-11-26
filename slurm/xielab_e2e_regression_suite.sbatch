@@ -283,7 +283,20 @@ print(f"counts: {counts}")
 PY
 
 echo "[xielab_e2e] done. Report: $REPORT"
-if grep -q $'\tfailed\t' "$RESULTS"; then
-  echo "[xielab_e2e] some stages FAILED; see $RESULTS" >&2
-  exit 1
+
+# Strict exit contract (M6):
+#   This five-stage suite is an *auxiliary* regression. It fails whenever any
+#   stage is not `ready`: a skipped or blocked stage means the evidence the suite
+#   claims to produce was never actually produced, so exiting 0 would report a
+#   false pass. Set ULTIMATE_E2E_ALLOW_SKIP=1 only for a deliberate dry run.
+not_ready=$(awk -F'\t' 'NR>1 && $2!="ready" {printf "%s(%s) ", $1, $2}' "$RESULTS")
+if [[ -n "$not_ready" ]]; then
+  if [[ "${ULTIMATE_E2E_ALLOW_SKIP:-0}" == "1" ]]; then
+    echo "[xielab_e2e] WARNING non-ready stages (allowed by ULTIMATE_E2E_ALLOW_SKIP=1): $not_ready" >&2
+  else
+    echo "[xielab_e2e] FAILED: non-ready stages: $not_ready" >&2
+    echo "[xielab_e2e] see $RESULTS; this suite is auxiliary - the M6 acceptance" >&2
+    echo "[xielab_e2e] checker (ultimate check-upstream-acceptance) is the final gate." >&2
+    exit 1
+  fi
 fi

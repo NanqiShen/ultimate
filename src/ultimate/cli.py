@@ -255,6 +255,70 @@ def handoff_check_command(root: Path, output_dir: Path | None) -> None:
         raise click.ClickException("handoff-check blocked: " + ",".join(manifest.get("blockers") or []))
 
 
+@main.command("check-upstream-acceptance")
+@click.option("--package-dir", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True, help="prepare-upstream package directory.")
+@click.option("--downstream-manifest", type=click.Path(path_type=Path, dir_okay=False), required=True, help="run_manifest.json produced by the downstream Ultimate run.")
+@click.option("--output", "output_path", type=click.Path(path_type=Path), default=None, help="Where to write the acceptance JSON.")
+def check_upstream_acceptance_command(package_dir: Path, downstream_manifest: Path, output_path: Path | None) -> None:
+    """Strictly validate an upstream -> import -> run chain (non-zero on any gap)."""
+    from ultimate.upstream_acceptance import (
+        RouteAcceptance,
+        check_downstream_consumed,
+        check_expected_files,
+        check_matrix_contract,
+        check_sample_count_agreement,
+        check_10x_directory,
+        evaluate,
+        exit_code,
+        write_acceptance,
+    )
+
+    package_dir = package_dir.resolve()
+    manifest_path = package_dir / "job_package_manifest.json"
+    if not manifest_path.is_file():
+        raise click.ClickException(f"not a prepare-upstream package: {package_dir}")
+    package = json.loads(manifest_path.read_text(encoding="utf-8"))
+    route = str(package.get("route") or "")
+    artifacts_dir = package_dir / "upstream_out"
+    acceptance = RouteAcceptance(route=route or "unknown")
+
+    check_expected_files(acceptance, "package", [
+        package_dir / "run_upstream.sbatch",
+        package_dir / "expected_import_project.yaml",
+        package_dir / "checksum_manifest.tsv",
+        package_dir / "samplesheet_normalized.tsv",
+    ])
+    normalized = package_dir / "samplesheet_normalized.tsv"
+    if route == "salmon":
+        matrix = artifacts_dir / "counts_raw.tsv"
+        check_expected_files(acceptance, "upstream", [matrix, artifacts_dir / "import_config.yaml"])
+        if matrix.is_file() and normalized.is_file():
+            expected = check_sample_count_agreement(acceptance, "upstream", matrix, normalized)
+            check_matrix_contract(acceptance, "upstream", matrix, expected_samples=expected)
+        check_downstream_consumed(
+            acceptance, "downstream", downstream_manifest,
+            expected_input=matrix if matrix.is_file() else artifacts_dir,
+        )
+    elif route == "starsolo":
+        import pandas as pd
+
+        samples = pd.read_csv(normalized, sep="\t")["sample_id"].astype(str).tolist() if normalized.is_file() else []
+        for sample in samples:
+            check_10x_directory(acceptance, f"upstream:{sample}", artifacts_dir / "star" / sample / "filtered")
+        check_downstream_consumed(
+            acceptance, "downstream", downstream_manifest,
+            expected_input=artifacts_dir / "star" / (samples[0] if samples else "sample") / "filtered",
+        )
+    else:
+        acceptance.add("route_supported", "fail", f"unsupported route: {route}")
+
+    payload = evaluate([acceptance])
+    target = (output_path or (package_dir / "M6_ACCEPTANCE.json")).resolve()
+    write_acceptance(target, payload)
+    click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    raise click.exceptions.Exit(exit_code(payload))
+
+
 @main.command("prepare-upstream")
 @click.option("--route", type=click.Choice(["salmon", "starsolo"]), required=True, help="Open-source upstream route without nextflow/apptainer.")
 @click.option("--samplesheet", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True, help="FASTQ samplesheet.tsv (sample, fastq_1, fastq_2).")

@@ -46,6 +46,9 @@ ROUTES: dict[str, dict[str, str]] = {
 
 FASTQ_SUFFIXES = (".fastq", ".fq", ".fastq.gz", ".fq.gz")
 
+# Sub-directory of the package that the Slurm template writes artefacts into.
+ARTIFACTS_SUBDIR = "upstream_out"
+
 # Index validation markers per route (a directory without these is not usable).
 INDEX_MARKERS: dict[str, tuple[str, ...]] = {
     "salmon": ("info.json", "versionInfo.json"),
@@ -77,8 +80,40 @@ class PrepareUpstreamResult:
         }
 
 
+# Accepted column aliases (case-insensitive, matched after trimming).
+SAMPLE_ALIASES = ("sample", "sample_id", "sampleid", "sample name", "sample_name")
+FASTQ1_ALIASES = ("fastq_1", "fq1", "r1", "fastq_r1", "read1", "fastq1")
+FASTQ2_ALIASES = ("fastq_2", "fq2", "r2", "fastq_r2", "read2", "fastq2")
+STRANDEDNESS_ALIASES = ("strandedness", "strand", "orientation")
+
+NORMALIZED_COLUMNS = ("sample_id", "fastq_1", "fastq_2", "strandedness")
+
+
+def _pick(clean: dict[str, str], aliases: tuple[str, ...]) -> str:
+    """First non-empty value among ``aliases`` (column names are case-insensitive)."""
+    for alias in aliases:
+        value = clean.get(alias, "")
+        if value:
+            return value
+    return ""
+
+
+def _normalize_columns(row: dict[str, str]) -> dict[str, str]:
+    clean: dict[str, str] = {}
+    for key, value in row.items():
+        if key is None:
+            continue
+        clean[str(key).strip().lower().replace("-", "_")] = str(value or "").strip()
+    return clean
+
+
 def _read_samplesheet(path: Path) -> tuple[list[dict[str, str]], str]:
-    """Parse the FASTQ samplesheet; return (rows, error)."""
+    """Parse and normalise the FASTQ samplesheet; return (rows, error).
+
+    The same normalised rows are written to ``samplesheet_normalized.tsv`` and are
+    the *only* thing the generated Slurm job consumes, so the validator and the
+    job script can never disagree about column order or aliases.
+    """
     if not path.is_file():
         return [], f"missing_samplesheet:{path}"
     try:
@@ -89,24 +124,55 @@ def _read_samplesheet(path: Path) -> tuple[list[dict[str, str]], str]:
     if not rows:
         return [], "empty_samplesheet:no_data_rows"
     normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
     for index, row in enumerate(rows, start=2):
-        clean = {str(key).strip(): str(value or "").strip() for key, value in row.items() if key}
-        sample = clean.get("sample") or clean.get("sample_id")
-        fq1 = (
-            clean.get("fastq_1")
-            or clean.get("fq1")
-            or clean.get("r1")
-            or clean.get("fastq_r1")
-            or clean.get("read1")
-        )
+        clean = _normalize_columns(row)
+        # Skip fully blank lines rather than failing on them.
+        if not any(clean.values()):
+            continue
+        sample = _pick(clean, SAMPLE_ALIASES)
+        fq1 = _pick(clean, FASTQ1_ALIASES)
         if not sample:
             return [], f"samplesheet_missing_sample_at_row:{index}"
         if not fq1:
             return [], f"samplesheet_missing_fastq_1_at_row:{index}"
-        clean["sample_id"] = sample
-        clean["fastq_1"] = fq1
-        normalized.append(clean)
+        if sample in seen:
+            return [], f"duplicate_sample_id:{sample}"
+        seen.add(sample)
+        normalized.append(
+            {
+                "sample_id": sample,
+                "fastq_1": fq1,
+                "fastq_2": _pick(clean, FASTQ2_ALIASES),
+                "strandedness": _pick(clean, STRANDEDNESS_ALIASES) or "auto",
+            }
+        )
+    if not normalized:
+        return [], "empty_samplesheet:no_data_rows"
     return normalized, ""
+
+
+def _validate_pairs(rows: list[dict[str, str]]) -> list[str]:
+    """A sample either has both reads or neither; half-pairs are ambiguous."""
+    blockers: list[str] = []
+    for row in rows:
+        has1 = bool(row.get("fastq_1") and row["fastq_1"] != "-")
+        has2 = bool(row.get("fastq_2") and row["fastq_2"] != "-")
+        if has2 and not has1:
+            blockers.append(f"missing_paired_read:fastq_1:{row['sample_id']}")
+        if has1 and has2:
+            continue
+        # Single-end is legitimate; nothing to add.
+    return blockers
+
+
+def _write_normalized_samplesheet(path: Path, rows: list[dict[str, str]]) -> Path:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(NORMALIZED_COLUMNS)
+        for row in rows:
+            writer.writerow([row.get(col, "") for col in NORMALIZED_COLUMNS])
+    return path
 
 
 def _resolve_fastq(value: str, base_dir: Path) -> Path:
@@ -149,6 +215,32 @@ def _validate_inputs(
                 blockers.append(f"not_a_fastq_file:{row['sample_id']}:{key}:{path.name}")
     # Raw data is strictly read-only: refuse an output dir inside the raw tree.
     return blockers
+
+
+def _count_semantics(route: str, artifacts_dir: Path) -> dict[str, str]:
+    """State exactly what the produced counts are - and what they are not."""
+    if route == "salmon":
+        return {
+            "level": "transcript",
+            "unit": "salmon NumReads rounded to integers",
+            "is_gene_level_raw_integer_counts": "false",
+            "raw_estimates_kept_at": str(artifacts_dir / "quant"),
+            "note": (
+                "NumReads is a transcript-level abundance estimate, not gene-level raw "
+                "integer counts. Preserve quant.sf and map transcripts to genes before any "
+                "gene-level differential expression."
+            ),
+        }
+    return {
+        "level": "cell_x_gene",
+        "unit": "STARsolo UMI counts in the standard 10x filtered/ matrix",
+        "is_gene_level_raw_integer_counts": "true",
+        "raw_estimates_kept_at": str(artifacts_dir / "star"),
+        "note": (
+            "STAR --soloType CB_UMI_Simple emits non-negative integer UMI counts; the "
+            "matrix is the standard 10x matrix.mtx format."
+        ),
+    }
 
 
 def _is_inside(candidate: Path, parent: Path) -> bool:
@@ -223,31 +315,62 @@ def _quote(path: Path) -> str:
     return f'"{escaped}"'
 
 
-def _render_expected_import_project(*, route: str, out_dir: Path, samplesheet: Path) -> str:
+def _render_expected_import_project(
+    *,
+    route: str,
+    artifacts_dir: Path,
+    samplesheet: Path,
+    sample_ids: list[str],
+) -> str:
+    """Render the import config that consumes the job's *actual* output paths.
+
+    ``artifacts_dir`` is the directory the Slurm template writes into
+    (``<package>/upstream_out``); using the package root here would point the
+    import at paths that never exist.
+    """
+    run_root = artifacts_dir / "runs" / "upstream_import"
     if route == "salmon":
         body = [
             "project:",
             "  name: upstream_salmon_import",
-            f"  output_dir: {out_dir}/runs/upstream_import",
+            f"  output_dir: {run_root}",
             "  organism: human",
             "modules:",
             "  rnaseq:",
             "    enabled: true",
-            f"    input_matrix: {out_dir}/counts_raw.tsv",
+            f"    input_matrix: {artifacts_dir}/counts_raw.tsv",
             "    analysis_level: smoke_backend",
+            "# Count semantics (do not overstate):",
+            "#   counts_raw.tsv holds salmon transcript-level NumReads values rounded to",
+            "#   integers. They are NOT gene-level raw integer counts; map transcripts to",
+            "#   genes before any gene-level differential expression. The untouched",
+            "#   per-sample quant.sf files are kept under quant/<sample>/quant.sf.",
+            f"# upstream_raw_quant: {artifacts_dir}/quant",
+            f"# upstream_import_config: {artifacts_dir}/import_config.yaml",
         ]
     else:
+        # STARsolo writes one filtered/ 10x directory per sample; the import must
+        # point at that directory, not at its parent.
+        per_sample = "\n".join(
+            f"    - sample_id: {sample}\n      input_path: {artifacts_dir}/star/{sample}/filtered"
+            for sample in sample_ids
+        )
         body = [
             "project:",
             "  name: upstream_starsolo_import",
-            f"  output_dir: {out_dir}/runs/upstream_import",
+            f"  output_dir: {run_root}",
             "  organism: human",
             "modules:",
             "  scrna:",
             "    enabled: true",
-            f"    input_path: {out_dir}/star",
             "    input_type: 10x_mtx",
             "    analysis_level: smoke_backend",
+            "    samples:",
+            per_sample,
+            "# Each input_path above is the standard 10x filtered/ directory produced",
+            "# by STARsolo for that sample (matrix.mtx.gz / barcodes.tsv.gz /",
+            "# features.tsv.gz).",
+            f"# upstream_import_config: {artifacts_dir}/import_config.yaml",
         ]
     body.extend(
         [
@@ -298,6 +421,7 @@ def prepare_upstream_package(
         return result
 
     input_blockers = _validate_inputs(rows, fastq_base, index_path, route_key)
+    input_blockers.extend(_validate_pairs(rows))
     raw_root = os.environ.get("ULTIMATE_RAW_ROOT", "")
     if raw_root:
         resolved_raw = Path(raw_root).resolve()
@@ -320,6 +444,14 @@ def prepare_upstream_package(
         result.blockers = input_blockers
         return result
 
+    # Never silently overwrite a previous run: an existing non-empty package is
+    # treated as a historical result and must be moved or removed by a human.
+    if output_dir.is_dir() and any(output_dir.iterdir()):
+        existing = sorted(p.name for p in output_dir.iterdir())
+        result.blocked_reason = f"output_dir_not_empty:{','.join(existing[:5])}"
+        result.blockers = [result.blocked_reason]
+        return result
+
     output_dir.mkdir(parents=True, exist_ok=True)
     template_name = ROUTES[route_key]["template"]
     try:
@@ -335,17 +467,26 @@ def prepare_upstream_package(
     checksums_path = output_dir / "checksum_manifest.tsv"
     manifest_path = output_dir / "job_package_manifest.json"
 
+    artifacts_dir = output_dir / ARTIFACTS_SUBDIR
+    # Single source of truth: the job reads only this normalised table, so the
+    # validator and the sbatch template can never disagree about columns.
+    normalized_path = _write_normalized_samplesheet(output_dir / "samplesheet_normalized.tsv", rows)
     run_path.write_text(
         _render_run_upstream(
-            route=route_key, samplesheet=samplesheet, fastq_dir=fastq_base, index=index_path,
-            out_dir=output_dir / "upstream_out", threads=budget.threads,
+            route=route_key, samplesheet=normalized_path, fastq_dir=fastq_base, index=index_path,
+            out_dir=artifacts_dir, threads=budget.threads,
             template_body=template_body, template_name=template_name,
         ),
         encoding="utf-8",
     )
     run_path.chmod(run_path.stat().st_mode | 0o111)
     project_path.write_text(
-        _render_expected_import_project(route=route_key, out_dir=output_dir, samplesheet=samplesheet),
+        _render_expected_import_project(
+            route=route_key,
+            artifacts_dir=artifacts_dir,
+            samplesheet=samplesheet,
+            sample_ids=[row["sample_id"] for row in rows],
+        ),
         encoding="utf-8",
     )
 
@@ -366,6 +507,7 @@ def prepare_upstream_package(
         "run_upstream_sbatch": str(run_path),
         "expected_import_project": str(project_path),
         "checksum_manifest": str(checksums_path),
+        "samplesheet_normalized": str(normalized_path),
         "job_package_manifest": str(manifest_path),
         "template": str(template_path),
     }
@@ -376,7 +518,8 @@ def prepare_upstream_package(
                 "status": "ready",
                 "route": route_key,
                 "module": ROUTES[route_key]["module"],
-                "samplesheet": str(samplesheet),
+                "samplesheet_source": str(samplesheet),
+                "samplesheet_normalized": str(normalized_path),
                 "fastq_dir": str(fastq_base),
                 "index": str(index_path),
                 "output_dir": str(output_dir),
@@ -384,6 +527,7 @@ def prepare_upstream_package(
                 "thread_source": budget.source,
                 "raw_read_only": True,
                 "auto_submitted": False,
+                "count_semantics": _count_semantics(route_key, artifacts_dir),
                 "submit_command": f"sbatch {run_path}",
                 "artifacts": result.artifacts,
             },

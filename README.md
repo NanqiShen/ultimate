@@ -610,6 +610,20 @@ Four Slurm templates back this route:
 | `slurm/upstream_scrna_starsolo.sbatch` | STARsolo -> standard 10x `filtered/` + `import_config.yaml` |
 | `slurm/xielab_e2e_regression_suite.sbatch` | XieLab end-to-end regression (doctor -> bulk -> scRNA -> proteomics/survival -> validation-index/audit-production) writing a Chinese `xielab_e2e_report.md` |
 
+After the upstream job completes, validate the chain with the strict checker (any
+missing, skipped, blocked or failed required check exits non-zero):
+
+```bash
+ultimate check-upstream-acceptance \
+  --package-dir jobs/<job_id>/config/upstream \
+  --downstream-manifest jobs/<job_id>/runs/<job_id>/run_manifest.json
+```
+
+The generated package also carries `samplesheet_normalized.tsv`: the validator and
+the Slurm job consume that identical file, so column order and aliases cannot drift
+between them. Salmon counts are transcript-level `NumReads` (not gene-level raw
+integer counts); `quant.sf` files are preserved for reconciliation.
+
 All four use `account=xielab`, `partition=compute_pro`, `qos=normal`, bind threads
 to `$SLURM_CPUS_PER_TASK`, and treat raw FASTQ as strictly read-only. See
 [docs/XIELAB_OPERATIONS.md](docs/XIELAB_OPERATIONS.md) for the full deployment

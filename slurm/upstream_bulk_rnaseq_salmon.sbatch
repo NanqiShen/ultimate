@@ -65,8 +65,16 @@ if [[ ! -f "$INDEX/info.json" && ! -f "$INDEX/versionInfo.json" ]]; then
   exit 2
 fi
 
-awk -F'\t' 'NR>1 {print $1"\t"$2"\t"$3"\t"$4}' "$SAMPLESHEET" > "$OUT_DIR/tables/samples_parsed.tsv"
-if [[ ! -s "$OUT_DIR/tables/samples_parsed.tsv" ]]; then
+# SAMPLESHEET is the normalised table produced by `ultimate prepare-upstream`
+# (columns: sample_id / fastq_1 / fastq_2 / strandedness). The validator and this
+# job therefore consume the identical file; no re-parsing of raw column order.
+if [[ "$(head -1 "$SAMPLESHEET")" != $'sample_id\tfastq_1\tfastq_2\tstrandedness' ]]; then
+  echo "[upstream_bulk] SAMPLESHEET is not the normalised table: $SAMPLESHEET" >&2
+  echo "Regenerate the package with: ultimate prepare-upstream ..." >&2
+  exit 2
+fi
+cp "$SAMPLESHEET" "$OUT_DIR/tables/samples_parsed.tsv"
+if [[ "$(wc -l < "$OUT_DIR/tables/samples_parsed.tsv")" -lt 2 ]]; then
   echo "[upstream_bulk] samplesheet has no data rows: $SAMPLESHEET" >&2
   exit 2
 fi
