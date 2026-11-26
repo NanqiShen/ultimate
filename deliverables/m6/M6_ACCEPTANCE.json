@@ -1,61 +1,100 @@
 {
-  "schema": "ultimate.m6.acceptance.v1",
-  "generated_at": "2026-11-26T04:14:36.425698+00:00",
-  "phase": "M6",
+  "schema": "ultimate.m6.acceptance.v2",
+  "generated_at": "2026-11-26T07:08:09.252244+00:00",
+  "phase": "M6-P0-Resigned",
   "overall_status": "BLOCKED",
-  "status_reason": "P0 interface fixes are complete and locally verified; the P1 cluster runs are blocked because the upstream toolchain, reference indexes, fixtures and submission authorization are all absent.",
-  "baseline_commit": "43d6e7e",
-  "candidate_commit": "c17e50d",
-  "p0_local_fixes": {
-    "status": "pass",
-    "items": [
-      {
-        "id": "P0-A",
-        "title": "artefact path / import config consistency",
-        "status": "pass",
-        "detail": "ARTIFACTS_SUBDIR is the single source for job OUT_DIR and import paths; STARsolo import points at upstream_out/star/<sample>/filtered."
-      },
-      {
-        "id": "P0-B",
-        "title": "single normalised samplesheet consumed by validator and job",
-        "status": "pass",
-        "detail": "samplesheet_normalized.tsv written and consumed; templates reject a non-normalised sheet; duplicate ids, half-pairs, aliases, spaces and non-empty output dirs covered."
-      },
-      {
-        "id": "P0-C",
-        "title": "count semantics stated honestly",
-        "status": "pass",
-        "detail": "count_semantics records salmon NumReads as transcript-level (not gene-level raw integer counts) and STARsolo as integer UMI counts."
-      },
-      {
-        "id": "P0-D",
-        "title": "strict acceptance checker",
-        "status": "pass",
-        "detail": "ultimate check-upstream-acceptance fails on any missing/skipped/blocked/failed required check and writes M6_ACCEPTANCE.json; local small-scale verification via tests."
-      },
-      {
-        "id": "P0-E",
-        "title": "auxiliary e2e suite no longer lenient",
-        "status": "pass",
-        "detail": "exits non-zero on any non-ready stage; M6 checker is the final gate."
-      }
-    ]
+  "status_reason": "M6-P0 interface contract fixes, strict acceptance checker upgrades, and four synthetic counterexample regressions are complete and locally verified. P1 cluster execution remains BLOCKED pending owner approval for environment creation, approved fixtures, pre-validated mini indexes, and Slurm submissions.",
+  "commit_lineage": {
+    "reported_m5_review_commit": "43d6e7e",
+    "actual_baseline_commit": "4b80344",
+    "p0_initial_fix_commit": "c17e50d",
+    "p0_initial_receipt_commit": "6bc6baa",
+    "p0_resigned_fix_commit": "5d9766b",
+    "receipt_commit": "HEAD"
   },
-  "pytest": {
-    "command": "/opt/anaconda3/bin/pytest -q",
-    "summary": "608 passed, 26 skipped, 0 failed",
-    "duration_seconds": 868.28,
-    "exit_code": 0
+  "p0_resigned_specifications": [
+    {
+      "id": "P0-1-DUAL-ROUTE",
+      "title": "Strict dual-route completeness requirement for M6 sign-off",
+      "status": "pass",
+      "detail": "check-upstream-acceptance now defaults to --require-both-routes=True. Any sign-off missing either bulk (salmon) or scRNA (starsolo) exits non-zero and explicitly records missing_routes."
+    },
+    {
+      "id": "P0-2-SALMON-RECONCILIATION",
+      "title": "Salmon quant.sf finite check and exact integer reconciliation",
+      "status": "pass",
+      "detail": "check_salmon_quant_reconciliation verifies that every sample has an existing, non-empty quant.sf, with finite NumReads, and verifies that round(NumReads) exactly matches counts_raw.tsv across all features. Mismatches, missing files, or NaN/Inf values strictly fail."
+    },
+    {
+      "id": "P0-3-STARSOLO-MATRIX-ENTRIES",
+      "title": "STARsolo deep entry-level Matrix Market inspection across all samples",
+      "status": "pass",
+      "detail": "check_10x_directory inspects every coordinate and count entry across all declared samples (not just the header). It verifies declared nnz entry count, coordinate bounds [1..n_features] and [1..n_barcodes], finite non-negative integer values, and presence of positive non-zero signal. Missing filtered directories for any sample fail."
+    },
+    {
+      "id": "P0-4-DOWNSTREAM-RUNTIME-PROOF",
+      "title": "Downstream runtime execution evidence and strict boolean gate",
+      "status": "pass",
+      "detail": "check_downstream_consumed requires valid run_id and ISO generated_at timestamp, matching input SHA-256 checksums for all expected inputs, verified positive actual dimensions (n_cells/n_genes or n_samples/n_genes), and strictly requires delivery_allowed to be boolean False (omitted, string, or True values fail)."
+    }
+  ],
+  "counterexample_regressions": [
+    {
+      "test_case": "test_m6_counterexample_1_missing_required_route",
+      "target": "Single route attempting to sign off M6",
+      "defect_result": "FAILED (exit code 1, payload['status'] == 'fail', missing_routes=['starsolo'])",
+      "valid_control_result": "PASSED (exit code 0, payload['status'] == 'pass', missing_routes=[])"
+    },
+    {
+      "test_case": "test_m6_counterexample_2_salmon_quant_reconciliation",
+      "target": "Salmon quant.sf reconciliation mismatch, missing file, or NaN values",
+      "defect_result": "FAILED (exit code 1, reported quant_reconciliation, quant_sf_present, or values_finite)",
+      "valid_control_result": "PASSED (exit code 0, payload['status'] == 'pass', all features verified)"
+    },
+    {
+      "test_case": "test_m6_counterexample_3_starsolo_matrix_entries",
+      "target": "STARsolo header nnz mismatch, negative/float values, all-zero signal, or missing sample filtered dir",
+      "defect_result": "FAILED (exit code 1, reported entry_count_matches_nnz, values_integer_nonnegative, nonzero_signal, or upstream:S2)",
+      "valid_control_result": "PASSED (exit code 0, payload['status'] == 'pass', all samples and entries verified)"
+    },
+    {
+      "test_case": "test_m6_counterexample_4_downstream_manifest_evidence",
+      "target": "Downstream missing runtime binding (run_id), checksum mismatch, missing dims, or non-boolean delivery_allowed",
+      "defect_result": "FAILED (exit code 1, reported downstream_runtime_binding, downstream_input_checksum, downstream_actual_dimensions, or delivery_allowed_boolean_false)",
+      "valid_control_result": "PASSED (exit code 0, payload['status'] == 'pass', runtime evidence verified, delivery_allowed is False)"
+    }
+  ],
+  "verification_evidence": {
+    "m6_contract_tests": {
+      "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py",
+      "result": "22 passed, 1 warning in 14.92s"
+    },
+    "all_upstream_related_tests": {
+      "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py tests/test_prepare_upstream.py tests/test_cli.py tests/test_slurm_runtime_layout.py tests/test_handoff_check.py",
+      "result": "135 passed, 1 warning in 40.71s"
+    },
+    "sbatch_syntax_check": {
+      "command": "bash -n slurm/*.sbatch (60 scripts)",
+      "result": "all_ok=yes (60/60 scripts)"
+    },
+    "redline_grep": {
+      "command": "grep -rnE \"/shared/shen|hpc-sbatch|queue = 'comp'|queue = 'cpu'|np\\.exp\\(-months\" src/ scripts/ slurm/ templates/handoffs/ --exclude=README.md",
+      "result": "0 hits (clean)"
+    },
+    "governance_gates_diff": {
+      "command": "git diff 43d6e7e..HEAD -- src/ultimate/delivery_check.py src/ultimate/approval_gate.py src/ultimate/analysis_levels.py",
+      "result": "0 lines deleted / 0 modifications (clean)"
+    }
   },
-  "cluster_preconditions": {
+  "cluster_preconditions_audit": {
     "slurm": {
       "account": {
         "value": "xielab",
-        "status": "confirmed"
+        "status": "confirmed_via_sacctmgr"
       },
       "partition": {
         "value": "compute_pro",
-        "status": "confirmed"
+        "status": "confirmed_via_sinfo_13_nodes_up"
       },
       "qos": {
         "value": "normal",
@@ -70,7 +109,7 @@
       "ultimate_upstream_env": {
         "path": "/dshare/xielab/analysisdata/TFC/shennq/ultimate_runtime/envs/ultimate-upstream",
         "status": "missing",
-        "reason": "not built yet; only ultimate-core, ultimate-celltypist-20260910 and two scrna-smoke envs exist"
+        "reason": "environment not built; requires running xielab_setup_upstream_env.sbatch"
       },
       "tools": {
         "fastp": "missing",
@@ -83,67 +122,64 @@
         "alevin-fry": "missing"
       }
     },
-    "reference_index": {
+    "reference_indexes": {
       "salmon_index": {
         "status": "missing",
-        "reason": "no salmon index under ultimate_runtime/cache or site reference root"
+        "reason": "no salmon index in runtime cache or reference root"
       },
       "star_index": {
         "status": "missing",
-        "reason": "no STAR genome index; building a full genome index is explicitly out of scope for M6"
+        "reason": "no STAR index; full-genome index creation is strictly forbidden"
       }
     },
     "fixtures": {
       "status": "missing",
-      "reason": "no frozen synthetic fixture or licensed public small sample staged; the raw data parent tree is empty and strictly read-only",
+      "reason": "no approved frozen synthetic fixture staged; raw data directory is read-only and empty",
       "raw_root": "/dshare/xielab/rawdata/TFC/shennq"
     },
     "submission_authorization": {
       "status": "not_granted",
-      "reason": "P1 slurm submission requires explicit owner approval per M6 instructions"
+      "reason": "P1 live execution requires explicit owner confirmation"
     }
   },
-  "p1_routes": [
+  "p1_planned_routes": [
     {
       "route": "bulk_rnaseq_salmon",
       "status": "blocked",
       "job_id": null,
       "blocked_by": [
-        "ultimate_upstream_env missing",
-        "salmon index missing",
-        "fixture missing",
-        "submission authorization not granted"
+        "ultimate-upstream environment missing",
+        "pre-validated salmon mini-index missing",
+        "approved small FASTQ fixture missing",
+        "submission authorization pending"
       ],
-      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal <job_id>/config/upstream/run_upstream.sbatch"
+      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/<job_id>/config/upstream/run_upstream.sbatch"
     },
     {
       "route": "scrna_starsolo",
       "status": "blocked",
       "job_id": null,
       "blocked_by": [
-        "ultimate_upstream_env missing",
-        "STAR index missing",
-        "barcode whitelist missing",
-        "fixture missing",
-        "submission authorization not granted"
+        "ultimate-upstream environment missing",
+        "pre-validated STAR mini-index missing",
+        "10x barcode whitelist missing",
+        "approved small scRNA FASTQ fixture missing",
+        "submission authorization pending"
       ],
-      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal <job_id>/config/upstream/run_upstream.sbatch"
+      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/<job_id>/config/upstream/run_upstream.sbatch"
     }
   ],
   "artifacts_sha256": {
+    "src/ultimate/cli.py": "c8be498e2b6c5968a11d35a8256eaa9c8d16983fe1ec80cd3c7e7eb603d0e6e5",
+    "src/ultimate/upstream_acceptance.py": "71c5e9ddd7efbc4bca0867d65440132a9370cdc99dff4463bb25a956ba22f850",
     "src/ultimate/prepare_upstream.py": "6570ec363f29c350bbd3813c383ea7c4a95888035c5d154e8541458688b95b4b",
-    "src/ultimate/upstream_acceptance.py": "9bea9f663e371cdfb1c830397ee0fe9075b678e1bb95fd37dc3f6b15970a0b20",
     "slurm/upstream_bulk_rnaseq_salmon.sbatch": "fe5f11c022cd9ec227113d5485b54225893e9fca8637d0dc897d22b3bc2054fa",
     "slurm/upstream_scrna_starsolo.sbatch": "5ab455854481b016b42e73721be764c9aa156fbeeb5f9dffcf2db318f6769024",
     "slurm/xielab_e2e_regression_suite.sbatch": "f3151ece587a51ccfbf4afda865ab5f9e8a581fd60c275a546b6b8efa120907a",
-    "tests/test_m6_upstream_contract.py": "1363ae1cd07f67301dd5019b3cde4b40db6ee7172c93450397575bafd2f81999"
-  },
-  "logs": {
-    "pytest": "/tmp/m6_full.log",
-    "p0_verification": "see tests/test_m6_upstream_contract.py"
+    "tests/test_m6_upstream_contract.py": "83f0c15496dab6ffda72d16cdf6575249bfd5b48c5afca047ea08fb80c577302"
   },
   "compliance": {
-    "foodie_excluded": true,
+    "foodie_completely_excluded": true,
     "no_patient_data": true,
     "no_full_scale_run": true,
     "no_shared_input_modified": true,
@@ -151,9 +187,30 @@
     "no_push": true,
     "delivery_allowed_expected_false": true
   },
-  "next_actions_require_owner": [
-    "approve building ultimate-upstream env (sbatch slurm/xielab_setup_upstream_env.sbatch)",
-    "provide or approve a frozen synthetic fixture and a pre-validated small salmon/STAR index",
-    "approve the two minimal chain submissions"
-  ]
+  "pending_approval_manifest": {
+    "1_environment_build": {
+      "description": "Build ultimate-upstream environment using micromamba on compute_pro",
+      "command": "sbatch --account=xielab --partition=compute_pro --qos=normal slurm/xielab_setup_upstream_env.sbatch",
+      "expected_resources": "4 CPUs, 24G RAM, 4h limit"
+    },
+    "2_fixtures": {
+      "description": "Approved frozen synthetic mini-FASTQ fixtures (e.g. 1,000 reads, non-patient data)",
+      "bulk_fixture": "synthetic_bulk_1k_paired.fastq.gz",
+      "scrna_fixture": "synthetic_scrna_1k_paired.fastq.gz"
+    },
+    "3_indexes_and_whitelist": {
+      "description": "Pre-validated compatible small reference indexes (do NOT build full genome index)",
+      "salmon_index": "pre-built small transcript index under cache/indexes/salmon_mini",
+      "star_index": "pre-built small chromosome index under cache/indexes/star_mini",
+      "whitelist": "10x 3M-february-2018.txt"
+    },
+    "4_resource_limits": {
+      "bulk_limits": "--account=xielab --partition=compute_pro --qos=normal --cpus-per-task=8 --mem=32G --time=12:00:00",
+      "scrna_limits": "--account=xielab --partition=compute_pro --qos=normal --cpus-per-task=8 --mem=48G --time=12:00:00"
+    },
+    "5_planned_submissions": {
+      "bulk_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/m6_p1_bulk/config/upstream/run_upstream.sbatch",
+      "scrna_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/m6_p1_scrna/config/upstream/run_upstream.sbatch"
+    }
+  }
 }
