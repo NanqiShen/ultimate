@@ -107,6 +107,16 @@ def run_bulk_module(
 
     artifacts["tables"].update(_write_common_tables(module_name, matrix, stats, samples, inputs, tables_dir))
     artifacts["tables"].update(_write_module_tables(module_name, matrix, stats, samples, inputs, tables_dir, module_cfg))
+    if module_name in {"rnaseq", "proteomics", "methylation"} and "de_results" in (artifacts["tables"] or {}):
+        enrichment = _run_local_enrichment(
+            config=config,
+            module_name=module_name,
+            de_table_path=Path(str(artifacts["tables"]["de_results"])),
+            output_dir=output_dir,
+            analysis_level=str(level_fields.get("analysis_level") or "smoke_backend"),
+        )
+        artifacts["tables"].update(enrichment.get("artifacts", {}))
+        artifacts.setdefault("enrichment", {}).update({"status": enrichment.get("status"), "reason": enrichment.get("reason", "")})
     artifacts["figures"].update(_write_common_figures(module_name, matrix, stats, samples, figures_dir, design))
     artifacts["figures"].update(_write_module_figures(module_name, matrix, stats, samples, inputs, figures_dir, module_cfg, inputs.clinical))
     artifacts["objects"].update(_write_bulk_objects(module_name, matrix, stats, inputs, objects_dir))
@@ -1321,6 +1331,32 @@ def _survival_proxy(matrix: pd.DataFrame, clinical: pd.DataFrame, feature_id: st
         merged.groupby("risk_group", dropna=False)
         .agg(n=("sample_id", "size"), median_expression=("expression", "median"), median_survival_time=("survival_time", "median"), event_rate=("event", "mean"))
         .reset_index()
+    )
+
+
+def _run_local_enrichment(
+    *,
+    config: dict[str, Any],
+    module_name: str,
+    de_table_path: Path,
+    output_dir: Path,
+    analysis_level: str,
+) -> dict[str, Any]:
+    """Local-GMT enrichment after the DE table exists; skips when no GMT."""
+    from ultimate.enrichment_backend import run_enrichment
+
+    if not de_table_path.is_file():
+        return {"status": "skipped", "reason": "missing_de_table", "artifacts": {}}
+    try:
+        de_table = pd.read_csv(de_table_path, sep="\t")
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        return {"status": "skipped", "reason": "unreadable_de_table", "artifacts": {}}
+    return run_enrichment(
+        de_table=de_table,
+        config=config,
+        module_name=module_name,
+        output_dir=output_dir,
+        analysis_level=analysis_level,
     )
 
 

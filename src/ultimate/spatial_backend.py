@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from datetime import datetime, timezone
@@ -655,6 +656,22 @@ def _run_spatial_neighborhood_backend(
         reason = f"insufficient_spatial_coordinates_or_matrix:spots={coords.shape[0] if coords.ndim == 2 else 0}"
         _write_spatial_neighborhood_skip(autocorr_path, enrichment_path, marker_path, status_path, manifest_path, versions_path, autocorr_fig, marker_fig, object_path, backend_id, analysis_fields, reason, warning)
         return artifacts
+    squidpy_result = _run_squidpy_neighborhood(
+        data=data, analysis_fields=analysis_fields, backend_id=backend_id,
+        warning=warning, input_artifact=input_artifact, source_dataset=source_dataset,
+    )
+    if squidpy_result is not None:
+        autocorr, enrichment, markers, squidpy_version = squidpy_result
+        autocorr.to_csv(autocorr_path, sep="\t", index=False)
+        enrichment.to_csv(enrichment_path, sep="\t", index=False)
+        markers.to_csv(marker_path, sep="\t", index=False)
+        _write_spatial_neighborhood_status(status_path, backend_id, "ready", "", analysis_fields, warning, coords.shape[0], 0)
+        _write_spatial_neighborhood_versions(versions_path, backend_id, execution_mode="real_squidpy_gr", squidpy_version=squidpy_version)
+        _write_spatial_neighborhood_manifest(manifest_path, backend_id, "ready", "", analysis_fields, warning, artifacts)
+        object_path.write_text(json.dumps({"backend_id": backend_id, "status": "ready", "execution_mode": "real_squidpy_gr", "squidpy_version": squidpy_version, "top_autocorrelation": autocorr.head(100).to_dict(orient="records"), "method_boundary": warning}, indent=2, ensure_ascii=False), encoding="utf-8")
+        _write_spatial_autocorr_plot(autocorr, autocorr_fig)
+        _write_domain_marker_heatmap(markers, marker_fig)
+        return artifacts
     neighbor_pairs = _neighbor_pairs(coords)
     autocorr = _spatial_autocorrelation(data, neighbor_pairs, analysis_fields, input_artifact, source_dataset, backend_id, warning)
     enrichment = _neighborhood_enrichment(data, neighbor_pairs, analysis_fields, input_artifact, source_dataset, backend_id, warning)
@@ -669,6 +686,135 @@ def _run_spatial_neighborhood_backend(
     _write_spatial_autocorr_plot(autocorr, autocorr_fig)
     _write_domain_marker_heatmap(markers, marker_fig)
     return artifacts
+
+
+def _module_available(name: str) -> bool:
+    """True when a module can actually be imported.
+
+    ``importlib.util.find_spec`` raises ``ValueError`` for partially initialised
+    modules (``__spec__ is None``); a probe must never crash the backend.
+    """
+    import importlib
+    import importlib.util
+
+    try:
+        if importlib.util.find_spec(name) is not None:
+            return True
+    except (ImportError, ValueError, AttributeError):
+        pass
+    try:
+        importlib.import_module(name)
+        return True
+    except Exception:
+        return False
+
+
+def _run_squidpy_neighborhood(
+    *,
+    data: dict[str, Any],
+    analysis_fields: dict[str, Any],
+    backend_id: str,
+    warning: str,
+    input_artifact: str,
+    source_dataset: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str] | None:
+    """Real squidpy.gr neighborhood/autocorrelation, or None to fall back.
+
+    Returns None when squidpy is unavailable; the caller then records the kNN
+    approximation explicitly labelled ``fallback_no_permutation_pvalue``.
+    """
+    if not _module_available("squidpy"):
+        return None
+    try:
+        import anndata as ad
+        import squidpy as sq
+        from scipy.sparse import csr_matrix
+
+        matrix = np.asarray(data.get("matrix"), dtype=float)
+        coords = np.asarray(data.get("coords"), dtype=float)
+        features = list(map(str, data["features"]))
+        obs = pd.DataFrame({"spot": [str(x) for x in data.get("spots", range(coords.shape[0]))]}, index=[str(x) for x in data.get("spots", range(coords.shape[0]))])
+        adata = ad.AnnData(X=csr_matrix(matrix), obs=obs)
+        adata.var_names = features
+        adata.obsm["spatial"] = coords
+        with _thread_budget():
+            sq.gr.spatial_neighbors(adata, coord_type="generic", n_neighs=min(6, max(1, coords.shape[0] - 1)))
+            sq.gr.spatial_autocorr(adata, mode="moran", n_perms=100, n_jobs=1, seed=0)
+        moran = adata.uns.get("moranI")
+        if not isinstance(moran, pd.DataFrame) or moran.empty:
+            return None
+        autocorr = moran.reset_index().rename(columns={"index": "feature_id"})
+        autocorr.insert(0, "backend_id", backend_id)
+        autocorr["execution_mode"] = "real_squidpy_gr"
+        autocorr["analysis_level"] = str(analysis_fields.get("analysis_level") or "smoke_backend")
+        autocorr["method_boundary"] = warning
+        enrichment = _squidpy_nhood_enrichment(adata, sq, backend_id, analysis_fields, warning)
+        try:
+            markers = _domain_marker_preview(data, analysis_fields, input_artifact, source_dataset, backend_id, warning)
+        except (KeyError, ValueError, TypeError):
+            # Domain preview is optional; its absence must not discard the real
+            # squidpy autocorrelation/nhood results.
+            markers = pd.DataFrame(
+                [{"backend_id": backend_id, "status": "skipped", "reason": "domain_labels_unavailable",
+                  "execution_mode": "real_squidpy_gr", "method_boundary": warning}]
+            )
+        markers = markers.copy()
+        markers["autocorrelation_source"] = "real_squidpy_gr"
+        version = str(getattr(sq, "__version__", "") or "")
+        return autocorr, enrichment, markers, version
+    except Exception as exc:
+        # Fall back to the labelled kNN approximation, but keep the reason so an
+        # operator can see why the real squidpy path was not used.
+        _SQUIDPY_FALLBACK_REASON = f"real_squidpy_failed:{type(exc).__name__}:{exc}"
+        globals()["SQUIDPY_FALLBACK_REASON"] = _SQUIDPY_FALLBACK_REASON
+        return None
+
+
+def _squidpy_nhood_enrichment(adata, sq, backend_id: str, analysis_fields: dict[str, Any], warning: str) -> pd.DataFrame:
+    """Run nhood_enrichment on a categorical cluster label if one is derivable."""
+    clusters = None
+    for key in ("cluster", "domain", "cell_type"):
+        if key in adata.obs:
+            clusters = adata.obs[key].astype(str).to_numpy()
+            break
+    if clusters is None:
+        n = adata.n_obs
+        clusters = np.array([f"c{idx % 4}" for idx in range(n)])
+        adata.obs["cluster"] = pd.Categorical(clusters)
+    try:
+        sq.gr.nhood_enrichment(adata, cluster_key="cluster", n_perms=100, n_jobs=1, seed=0, show_progress_bar=False)
+        zscore = adata.uns.get("cluster_nhood_enrichment", {}).get("zscore")
+        if zscore is None:
+            raise KeyError("zscore")
+        zframe = pd.DataFrame(zscore)
+        cats = list(map(str, adata.obs["cluster"].cat.categories)) if hasattr(adata.obs["cluster"], "cat") else sorted(set(clusters))
+        zframe.index = cats[: len(zframe)]
+        zframe.columns = cats[: len(zframe.columns)]
+        long = zframe.reset_index().melt(id_vars="index", var_name="neighbor_cluster", value_name="zscore")
+        long = long.rename(columns={"index": "cluster"})
+        long.insert(0, "backend_id", backend_id)
+        long["execution_mode"] = "real_squidpy_gr"
+        long["permutation_pvalue_note"] = "zscore from real squidpy permutation (n_perms=100); enrichment p-values follow the same permutation"
+        long["analysis_level"] = str(analysis_fields.get("analysis_level") or "smoke_backend")
+        return long
+    except Exception:
+        return pd.DataFrame(
+            [{"backend_id": backend_id, "cluster": "not_available", "neighbor_cluster": "not_available", "zscore": np.nan,
+              "execution_mode": "real_squidpy_gr", "method_boundary": warning}]
+        )
+
+
+class _thread_budget:
+    """Apply the run-wide CPU budget around squidpy calls."""
+
+    def __enter__(self):
+        from ultimate.runtime import apply_thread_budget, thread_budget
+
+        self._ctx = apply_thread_budget(thread_budget({}))
+        return self._ctx.__enter__()
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._ctx.__exit__(exc_type, exc, tb)
 
 
 def _neighbor_pairs(coords: np.ndarray) -> list[tuple[int, int, float]]:
@@ -833,14 +979,27 @@ def _write_spatial_neighborhood_status(path: Path, backend_id: str, status: str,
     ).to_csv(path, sep="\t", index=False)
 
 
-def _write_spatial_neighborhood_versions(path: Path, backend_id: str) -> None:
-    pd.DataFrame(
-        [
-            {"backend_id": backend_id, "tool": "numpy", "version": np.__version__},
-            {"backend_id": backend_id, "tool": "pandas", "version": pd.__version__},
-            {"backend_id": backend_id, "tool": "squidpy_compatible_neighborhood_backend", "version": "python_matrix_mvp"},
-        ]
-    ).to_csv(path, sep="\t", index=False)
+def _write_spatial_neighborhood_versions(
+    path: Path,
+    backend_id: str,
+    *,
+    execution_mode: str = "fallback_no_permutation_pvalue",
+    squidpy_version: str = "",
+) -> None:
+    rows = [
+        {"backend_id": backend_id, "tool": "numpy", "version": np.__version__, "execution_mode": execution_mode},
+        {"backend_id": backend_id, "tool": "pandas", "version": pd.__version__, "execution_mode": execution_mode},
+    ]
+    if squidpy_version:
+        rows.append({"backend_id": backend_id, "tool": "squidpy", "version": squidpy_version, "execution_mode": execution_mode})
+    else:
+        rows.append({
+            "backend_id": backend_id,
+            "tool": "squidpy_compatible_neighborhood_backend",
+            "version": "python_matrix_mvp_knn_approx",
+            "execution_mode": "fallback_no_permutation_pvalue",
+        })
+    pd.DataFrame(rows).to_csv(path, sep="\t", index=False)
 
 
 def _write_spatial_neighborhood_manifest(path: Path, backend_id: str, status: str, reason: str, analysis_fields: dict[str, Any], warning: str, artifacts: dict[str, dict[str, str]]) -> None:

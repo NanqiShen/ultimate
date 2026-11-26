@@ -263,6 +263,7 @@ def run_scrna_mvp_module_backend(*, config: dict[str, Any], output_dir: Path, sa
         production_approval=config.get("_production_approval") if isinstance(config.get("_production_approval"), dict) else None,
         celltypist_model=Path(str(celltypist_model)) if celltypist_model else None,
         nichenet_resource=Path(str(nichenet_resource)) if nichenet_resource else None,
+        config=config,
     )
     backend_execution_rows = list(manifest.get("backend_status") or []) if isinstance(manifest.get("backend_status"), list) else []
     backend_plan = enrich_backend_plan_for_run(

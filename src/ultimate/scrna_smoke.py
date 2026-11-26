@@ -108,6 +108,7 @@ def run_scrna_validation(
     production_approval: dict[str, Any] | None = None,
     celltypist_model: Path | None = None,
     nichenet_resource: Path | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if analysis_level == "production_backend" and production_approval is None:
         raise ValueError("production_backend requires --production-approval with an approved JSON gate file")
@@ -193,7 +194,25 @@ def run_scrna_validation(
     sc.pp.scale(adata, max_value=10)
     n_comps = max(2, min(30, adata.n_obs - 1, adata.n_vars - 1))
     sc.tl.pca(adata, n_comps=n_comps, svd_solver="arpack", random_state=random_seed)
-    sc.pp.neighbors(adata, n_neighbors=min(15, max(2, adata.n_obs // 4)), n_pcs=n_comps)
+    # Batch integration runs on the PCA embedding before neighbours/UMAP/Leiden,
+    # so the down-stream clustering reflects the harmonised space.
+    integration_status, integration_artifacts = _run_batch_integration(
+        sc=sc,
+        adata=adata,
+        tables=tables,
+        figures=figures,
+        config=config,
+        random_seed=random_seed,
+        analysis_level=level.analysis_level,
+    )
+    backend_rows.append(integration_status)
+    backend_artifacts.update(integration_artifacts)
+    # Use the harmonised embedding for neighbours when integration succeeded.
+    _use_rep = adata.uns.get("ultimate_integration_use_rep")
+    if _use_rep and _use_rep in adata.obsm:
+        sc.pp.neighbors(adata, n_neighbors=min(15, max(2, adata.n_obs // 4)), use_rep=_use_rep)
+    else:
+        sc.pp.neighbors(adata, n_neighbors=min(15, max(2, adata.n_obs // 4)), n_pcs=n_comps)
     sc.tl.umap(adata, random_state=random_seed)
     try:
         sc.tl.leiden(adata, resolution=0.5, key_added="cluster")
@@ -223,6 +242,25 @@ def run_scrna_validation(
     )
     backend_rows.append(pseudobulk_status)
     backend_artifacts.update(pseudobulk_backend_artifacts)
+    enrichment_status, enrichment_artifacts = _run_scrna_enrichment(
+        config=config,
+        tables=tables,
+        output_dir=output_dir,
+        analysis_level=level.analysis_level,
+    )
+    if enrichment_status is not None:
+        backend_rows.append(enrichment_status)
+        backend_artifacts.update(enrichment_artifacts)
+    paired_status, paired_artifacts = _run_paired_pseudobulk_edger(
+        config=config,
+        tables=tables,
+        figures=figures,
+        objects=objects,
+        analysis_level=level.analysis_level,
+    )
+    if paired_status is not None:
+        backend_rows.append(paired_status)
+        backend_artifacts.update(paired_artifacts)
     celltypist_status, celltypist_artifacts = _run_celltypist_backend(
         adata=adata,
         tables=tables,
@@ -341,6 +379,15 @@ def run_scrna_validation(
         },
         "pseudobulk_de_status": "design_ready_matrix_only",
         "pseudobulk_formal_de_status": pseudobulk_status.get("status", "not_recorded"),
+        "batch_integration_status": integration_status.get("status", "not_recorded"),
+        "batch_integration_reason": integration_status.get("reason", ""),
+        "batch_integration": {
+            "backend_id": INTEGRATION_BACKEND_ID,
+            "status": integration_status.get("status", "not_recorded"),
+            "reason": integration_status.get("reason", ""),
+            "metrics_table": str(tables / "batch_integration_metrics.tsv"),
+            "comparison_figure": str(figures / "umap_batch_before_after.png"),
+        },
         "backend_execution_status": _backend_execution_summary(backend_rows),
         "pseudobulk_matrix_source": pseudobulk_matrix_source,
         "cell_type_annotation_status": "placeholder_not_cell_type",
@@ -582,6 +629,278 @@ def _write_10x_h5(counts, obs: pd.DataFrame, var: pd.DataFrame, path: Path) -> N
         features.create_dataset("name", data=np.asarray(var["gene_symbol"].astype("S")))
         features.create_dataset("feature_type", data=np.asarray(var["feature_type"].astype("S")))
         features.create_dataset("genome", data=np.asarray(var["genome"].astype("S")))
+
+
+INTEGRATION_BACKEND_ID = "scrna.integration.harmony"
+INTEGRATION_DEFAULT_BATCH_COLUMN = "batch"
+
+
+def _resolve_batch_column(config: dict | None) -> str:
+    """design.batch_column -> modules.scrna.batch_column -> "batch"."""
+    cfg = config if isinstance(config, dict) else {}
+    design = cfg.get("design") if isinstance(cfg.get("design"), dict) else {}
+    if design.get("batch_column"):
+        return str(design["batch_column"])
+    modules = cfg.get("modules") if isinstance(cfg.get("modules"), dict) else {}
+    scrna_cfg = modules.get("scrna") if isinstance(modules.get("scrna"), dict) else {}
+    if scrna_cfg.get("batch_column"):
+        return str(scrna_cfg["batch_column"])
+    return INTEGRATION_DEFAULT_BATCH_COLUMN
+
+
+def _resolve_batch_correction_mode(config: dict | None) -> str:
+    cfg = config if isinstance(config, dict) else {}
+    modules = cfg.get("modules") if isinstance(cfg.get("modules"), dict) else {}
+    scrna_cfg = modules.get("scrna") if isinstance(modules.get("scrna"), dict) else {}
+    mode = str(scrna_cfg.get("batch_correction") or "none").strip().lower()
+    if mode not in {"none", "harmony", "auto"}:
+        return "none"
+    return mode
+
+
+def _knn_batch_entropy(embedding: np.ndarray, batches: np.ndarray, k: int = 15) -> float:
+    """Mean per-cell batch entropy over its k nearest neighbours (higher = better mixing)."""
+    n = embedding.shape[0]
+    if n <= 2:
+        return 0.0
+    k = int(max(1, min(k, n - 1)))
+    d2 = ((embedding[:, None, :] - embedding[None, :, :]) ** 2).sum(axis=2)
+    np.fill_diagonal(d2, np.inf)
+    neighbours = np.argsort(d2, axis=1)[:, :k]
+    unique_batches = np.unique(batches)
+    entropies = []
+    for row in neighbours:
+        counts = np.array([(batches[row] == b).sum() for b in unique_batches], dtype=float)
+        p = counts[counts > 0] / counts.sum()
+        entropies.append(float(-(p * np.log(p)).sum()))
+    normaliser = float(np.log(max(2, len(unique_batches))))
+    return float(np.mean(entropies) / normaliser) if normaliser > 0 else 0.0
+
+
+def _knn_ilisi_approx(embedding: np.ndarray, batches: np.ndarray, k: int = 15) -> float:
+    """Approximate inverse Simpson index over the neighbourhood batch composition."""
+    n = embedding.shape[0]
+    if n <= 2:
+        return 0.0
+    k = int(max(1, min(k, n - 1)))
+    d2 = ((embedding[:, None, :] - embedding[None, :, :]) ** 2).sum(axis=2)
+    np.fill_diagonal(d2, np.inf)
+    neighbours = np.argsort(d2, axis=1)[:, :k]
+    unique_batches = np.unique(batches)
+    values = []
+    for row in neighbours:
+        counts = np.array([(batches[row] == b).sum() for b in unique_batches], dtype=float)
+        p = counts[counts > 0] / counts.sum()
+        values.append(float(1.0 / (p ** 2).sum()))
+    return float(np.mean(values))
+
+
+def _cluster_preservation(before: np.ndarray, after: np.ndarray, seed: int = 7) -> float:
+    """Adjusted Rand index between clustering before/after integration."""
+    try:
+        from sklearn.metrics import adjusted_rand_score
+    except ImportError:
+        return float("nan")
+    return float(adjusted_rand_score(before, after))
+
+
+def _write_batch_integration_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
+    pd.DataFrame(rows).to_csv(path, sep="\t", index=False)
+
+
+def _plot_umap_before_after(before: np.ndarray, after: np.ndarray, batches: np.ndarray, path: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    apply_clinical_journal_style()
+    unique = list(dict.fromkeys(batches.tolist()))
+    cmap = plt.get_cmap("tab10")
+    colours = {batch: cmap(idx % 10) for idx, batch in enumerate(unique)}
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.8))
+    for ax, coords, subtitle in (
+        (axes[0], before, "Before integration"),
+        (axes[1], after, "After integration"),
+    ):
+        for batch in unique:
+            mask = batches == batch
+            ax.scatter(coords[mask, 0], coords[mask, 1], s=4, color=colours[batch], label=str(batch), linewidth=0)
+        ax.set_title(subtitle, fontsize=11)
+        ax.set_xlabel("UMAP1")
+        ax.set_ylabel("UMAP2")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    axes[0].legend(markerscale=3, fontsize=8, title="batch", loc="best")
+    fig.tight_layout()
+    save_figure(path, close=True)
+    plt.close(fig)
+
+
+def _run_batch_integration(
+    *,
+    sc: Any,
+    adata: Any,
+    tables: Path,
+    figures: Path,
+    config: dict | None,
+    random_seed: int,
+    analysis_level: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Harmony batch integration over X_pca, or an explicit skipped record."""
+    backend_id = INTEGRATION_BACKEND_ID
+    metrics_path = tables / "batch_integration_metrics.tsv"
+    figure_path = figures / "umap_batch_before_after.png"
+    status_path = tables / "batch_integration_status.tsv"
+
+    tables.mkdir(parents=True, exist_ok=True)
+    figures.mkdir(parents=True, exist_ok=True)
+    batch_column = _resolve_batch_column(config)
+    mode = _resolve_batch_correction_mode(config)
+    artifacts: dict[str, str] = {
+        "batch_integration_metrics": str(metrics_path),
+        "batch_integration_status": str(status_path),
+        "umap_batch_before_after": str(figure_path),
+    }
+
+    if batch_column not in adata.obs:
+        return _integration_skip(
+            backend_id, analysis_level, f"missing_batch_column:{batch_column}",
+            metrics_path, status_path, artifacts,
+        )
+    batches = adata.obs[batch_column].astype(str).to_numpy()
+    n_batches = int(pd.Series(batches).nunique())
+    if n_batches < 2:
+        return _integration_skip(
+            backend_id, analysis_level, f"single_batch_no_integration:{batch_column}",
+            metrics_path, status_path, artifacts,
+        )
+    if mode == "none":
+        return _integration_skip(
+            backend_id, analysis_level, "batch_correction_disabled:none",
+            metrics_path, status_path, artifacts,
+        )
+
+    try:
+        import harmonypy  # noqa: F401
+    except ImportError:
+        return _integration_skip(
+            backend_id, analysis_level, "dependency_missing:harmonypy",
+            metrics_path, status_path, artifacts,
+        )
+
+    if "X_pca" not in adata.obsm:
+        return _integration_skip(
+            backend_id, analysis_level, "missing_pca_embedding",
+            metrics_path, status_path, artifacts,
+        )
+
+    n_pcs = int(adata.obsm["X_pca"].shape[1])
+    # Preserve the pre-integration UMAP/embedding for comparison and reproducibility.
+    adata.obsm["X_pca_unintegrated"] = np.asarray(adata.obsm["X_pca"]).copy()
+    sc.pp.neighbors(adata, n_neighbors=min(15, max(2, adata.n_obs // 4)), n_pcs=n_pcs)
+    sc.tl.umap(adata, random_state=random_seed)
+    before_umap = np.asarray(adata.obsm["X_umap"]).copy()
+    adata.obsm["X_umap_unintegrated"] = before_umap
+
+    meta = pd.DataFrame({batch_column: batches}, index=adata.obs_names)
+    try:
+        import harmonypy
+
+        ho = harmonypy.run_harmony(adata.obsm["X_pca"], meta, batch_column, random_state=random_seed, verbose=False)
+        corrected = np.asarray(ho.Z_corr)
+        if corrected.shape[0] == n_pcs and corrected.shape[1] == adata.n_obs:
+            corrected = corrected.T
+    except Exception as exc:  # pragma: no cover - depends on optional package internals
+        return _integration_skip(
+            backend_id, analysis_level, f"harmony_failed:{type(exc).__name__}",
+            metrics_path, status_path, artifacts,
+        )
+
+    adata.obsm["X_pca_harmony"] = corrected
+    adata.uns["ultimate_integration_use_rep"] = "X_pca_harmony"
+    cluster_before = _cluster_on_embedding(adata.obsm["X_pca"], random_seed)
+    sc.pp.neighbors(adata, n_neighbors=min(15, max(2, adata.n_obs // 4)), use_rep="X_pca_harmony")
+    sc.tl.umap(adata, random_state=random_seed)
+    after_umap = np.asarray(adata.obsm["X_umap"]).copy()
+    cluster_after = _cluster_on_embedding(adata.obsm["X_pca_harmony"], random_seed)
+
+    entropy_before = _knn_batch_entropy(np.asarray(adata.obsm["X_pca_unintegrated"]), batches)
+    entropy_after = _knn_batch_entropy(corrected, batches)
+    ilisi_before = _knn_ilisi_approx(np.asarray(adata.obsm["X_pca_unintegrated"]), batches)
+    ilisi_after = _knn_ilisi_approx(corrected, batches)
+    preservation = _cluster_preservation(cluster_before, cluster_after, random_seed)
+
+    _write_batch_integration_metrics(
+        metrics_path,
+        [
+            {
+                "backend_id": backend_id,
+                "status": "ready",
+                "analysis_level": analysis_level,
+                "batch_column": batch_column,
+                "n_batches": n_batches,
+                "n_cells": int(adata.n_obs),
+                "n_pcs": n_pcs,
+                "batch_entropy_before": round(entropy_before, 6),
+                "batch_entropy_after": round(entropy_after, 6),
+                "ilisi_approx_before": round(ilisi_before, 6),
+                "ilisi_approx_after": round(ilisi_after, 6),
+                "cluster_preservation_ari": round(preservation, 6) if preservation == preservation else "",
+                "metric_note": "entropy/ilisi are kNN approximations, not scib ilisi",
+                "delivery_allowed": False,
+            }
+        ],
+    )
+    pd.DataFrame(
+        [{"backend_id": backend_id, "status": "ready", "reason": "", "analysis_level": analysis_level,
+          "use_rep": "X_pca_harmony", "harmonypy_version": _package_version("harmonypy"), "delivery_allowed": False}]
+    ).to_csv(status_path, sep="\t", index=False)
+    _plot_umap_before_after(before_umap, after_umap, batches, figure_path)
+    adata.obs["batch"] = pd.Categorical(batches)
+    return _backend_row(backend_id, "ready", analysis_level, ""), artifacts
+
+
+def _cluster_on_embedding(embedding: np.ndarray, seed: int) -> np.ndarray:
+    try:
+        from sklearn.cluster import KMeans
+
+        k = int(min(6, max(2, embedding.shape[0] // 30)))
+        return KMeans(n_clusters=k, random_state=seed, n_init=10).fit_predict(np.asarray(embedding))
+    except ImportError:  # pragma: no cover
+        return np.zeros(embedding.shape[0], dtype=int)
+
+
+def _package_version(name: str) -> str:
+    try:
+        module = __import__(name)
+    except ImportError:
+        return ""
+    return str(getattr(module, "__version__", "") or "")
+
+
+def _integration_skip(
+    backend_id: str,
+    analysis_level: str,
+    reason: str,
+    metrics_path: Path,
+    status_path: Path,
+    artifacts: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Record an explicit skipped integration, never a silent no-op."""
+    _write_batch_integration_metrics(
+        metrics_path,
+        [
+            {
+                "backend_id": backend_id,
+                "status": "skipped",
+                "reason": reason,
+                "analysis_level": analysis_level,
+                "delivery_allowed": False,
+            }
+        ],
+    )
+    pd.DataFrame(
+        [{"backend_id": backend_id, "status": "skipped", "reason": reason, "analysis_level": analysis_level, "delivery_allowed": False}]
+    ).to_csv(status_path, sep="\t", index=False)
+    return _backend_row(backend_id, "skipped", analysis_level, reason), artifacts
 
 
 def _attach_samplesheet(adata, samplesheet: Path | None) -> None:
@@ -1701,6 +2020,159 @@ def _run_nichenet_backend(
         reason = f"backend_failed:{type(exc).__name__}:{exc}"
         _write_nichenet_skip_outputs(activity_path, links_path, status_path, manifest_path, figure_path, backend_id, analysis_level, reason, artifacts)
         return _backend_row(backend_id, "failed", analysis_level, reason), artifacts
+
+
+SCRN_ENRICHMENT_BACKEND_ID = "scrna.enrichment.local_gmt"
+
+
+def _run_scrna_enrichment(
+    *,
+    config: dict | None,
+    tables: Path,
+    output_dir: Path,
+    analysis_level: str,
+) -> tuple[dict[str, Any] | None, dict[str, str]]:
+    """Local-GMT enrichment over scRNA DE/marker tables; explicit skip otherwise."""
+    candidate_tables = [
+        tables / "pseudobulk_de_results.tsv",
+        tables / "de_condition.tsv",
+        tables / "marker_genes.tsv",
+    ]
+    de_table_path = next((path for path in candidate_tables if path.is_file()), None)
+    if de_table_path is None:
+        return None, {}
+    from ultimate.enrichment_backend import run_enrichment
+
+    try:
+        de_table = pd.read_csv(de_table_path, sep="\t")
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        return _backend_row(SCRN_ENRICHMENT_BACKEND_ID, "skipped", analysis_level, "unreadable_de_table"), {}
+    result = run_enrichment(
+        de_table=de_table,
+        config=config if isinstance(config, dict) else {},
+        module_name="scrna",
+        output_dir=output_dir,
+        analysis_level=analysis_level,
+    )
+    return (
+        _backend_row(
+            SCRN_ENRICHMENT_BACKEND_ID,
+            str(result.get("status") or "not_recorded"),
+            analysis_level,
+            str(result.get("reason") or ""),
+        ),
+        {key: str(value) for key, value in (result.get("artifacts") or {}).items()},
+    )
+
+
+PAIRED_PSEUDOBULK_BACKEND_ID = "scrna.pseudobulk.edger_paired"
+
+
+def _paired_pseudobulk_config(config: dict | None) -> dict[str, Any] | None:
+    """Return paired-design keys when the operator enabled paired edgeR DE."""
+    cfg = config if isinstance(config, dict) else {}
+    modules = cfg.get("modules") if isinstance(cfg.get("modules"), dict) else {}
+    scrna_cfg = modules.get("scrna") if isinstance(modules.get("scrna"), dict) else {}
+    pseudobulk = scrna_cfg.get("pseudobulk") if isinstance(scrna_cfg.get("pseudobulk"), dict) else {}
+    enabled = (
+        bool(pseudobulk.get("edger_paired"))
+        or bool(pseudobulk.get("paired"))
+        or bool(scrna_cfg.get("pseudobulk_paired"))
+    )
+    donor = pseudobulk.get("donor_column") or scrna_cfg.get("donor_column")
+    condition = pseudobulk.get("condition_column") or scrna_cfg.get("condition_column")
+    cell_type_col = pseudobulk.get("cell_type_column") or scrna_cfg.get("cell_type_column")
+    has_design = bool(donor and condition and cell_type_col)
+    if not (enabled or has_design or pseudobulk.get("sce_rda")):
+        return None
+    return {
+        "enabled": enabled or has_design,
+        "donor_column": str(donor or "donor"),
+        "condition_column": str(condition or "condition"),
+        "cell_type_column": str(cell_type_col or "cluster"),
+        "cell_type": str(pseudobulk.get("cell_type") or scrna_cfg.get("cell_type") or ""),
+        "control": str(pseudobulk.get("control") or scrna_cfg.get("control") or cfg.get("design", {}).get("control") or "control"),
+        "case": str(pseudobulk.get("case") or scrna_cfg.get("case") or cfg.get("design", {}).get("case") or "treated"),
+        "sce_rda": pseudobulk.get("sce_rda") or scrna_cfg.get("sce_rda"),
+        "counts": pseudobulk.get("counts"),
+        "design": pseudobulk.get("design"),
+        "min_cells": int(pseudobulk.get("min_cells", 1)),
+        "min_pairs": int(pseudobulk.get("min_pairs", 4)),
+    }
+
+
+def _run_paired_pseudobulk_edger(
+    *,
+    config: dict | None,
+    tables: Path,
+    figures: Path,
+    objects: Path,
+    analysis_level: str,
+) -> tuple[dict[str, Any] | None, dict[str, str]]:
+    """Paired edgeR pseudobulk DE inside `ultimate run`, or an explicit skip row."""
+    opts = _paired_pseudobulk_config(config)
+    if opts is None:
+        return None, {}
+    backend_id = PAIRED_PSEUDOBULK_BACKEND_ID
+    tables.mkdir(parents=True, exist_ok=True)
+    status_path = tables / "pseudobulk_paired_backend_status.tsv"
+    result_path = tables / "pseudobulk_de_results.tsv"
+    artifacts = {
+        "pseudobulk_paired_backend_status": str(status_path),
+        "pseudobulk_paired_de_results": str(result_path),
+    }
+    # Route to the R environment that actually owns edgeR.
+    if _rscript_str("scrna") == "":
+        return _paired_skip(backend_id, analysis_level, "dependency_missing:Rscript", status_path, artifacts)
+    if not opts["cell_type"]:
+        return _paired_skip(backend_id, analysis_level, "missing_cell_type_for_paired_design", status_path, artifacts)
+    if not (opts["sce_rda"] or (opts["counts"] and opts["design"])):
+        return _paired_skip(backend_id, analysis_level, "missing_paired_input:sce_rda_or_counts+design", status_path, artifacts)
+
+    from ultimate.scrna_pseudobulk_de import run_scrna_pseudobulk_de
+
+    try:
+        manifest = run_scrna_pseudobulk_de(
+            output_dir=tables.parent.parent,
+            sce_rda=Path(str(opts["sce_rda"])) if opts["sce_rda"] else None,
+            counts=Path(str(opts["counts"])) if opts["counts"] else None,
+            design=Path(str(opts["design"])) if opts["design"] else None,
+            donor_column=opts["donor_column"],
+            condition_column=opts["condition_column"],
+            cell_type_column=opts["cell_type_column"],
+            cell_type=opts["cell_type"],
+            control=opts["control"],
+            case=opts["case"],
+            min_cells=opts["min_cells"],
+            min_pairs=opts["min_pairs"],
+            analysis_level=analysis_level,
+        )
+    except (OSError, ValueError, RuntimeError, ImportError) as exc:
+        return _paired_skip(backend_id, analysis_level, f"paired_pseudobulk_failed:{type(exc).__name__}:{exc}", status_path, artifacts)
+
+    status = str(manifest.get("status") or "not_recorded")
+    reason = str(manifest.get("skip_reason") or manifest.get("reason") or "")
+    pd.DataFrame(
+        [{"backend_id": backend_id, "status": status, "reason": reason, "analysis_level": analysis_level,
+          "n_pairs": manifest.get("n_pairs", ""), "engine": manifest.get("engine", "edgeR"),
+          "delivery_allowed": False}]
+    ).to_csv(status_path, sep="\t", index=False)
+    artifacts["pseudobulk_paired_manifest"] = str(tables / "pseudobulk_de_backend_manifest.json")
+    row = _backend_row(backend_id, status if status in {"ready", "skipped", "failed"} else "not_recorded", analysis_level, reason)
+    return row, artifacts
+
+
+def _paired_skip(
+    backend_id: str,
+    analysis_level: str,
+    reason: str,
+    status_path: Path,
+    artifacts: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    pd.DataFrame(
+        [{"backend_id": backend_id, "status": "skipped", "reason": reason, "analysis_level": analysis_level, "delivery_allowed": False}]
+    ).to_csv(status_path, sep="\t", index=False)
+    return _backend_row(backend_id, "skipped", analysis_level, reason), artifacts
 
 
 def _run_pseudobulk_de_backend(*, tables: Path, analysis_level: str) -> tuple[dict[str, Any], dict[str, str]]:

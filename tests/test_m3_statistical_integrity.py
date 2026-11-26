@@ -55,11 +55,42 @@ def test_shuffled_samples_still_produce_correct_km_and_logrank(tmp_path: Path):
         clinical, expression,
         figures_dir=tmp_path / "fig", tables_dir=tmp_path / "tab", label="GENE",
     )
+    if result.status == "skipped":
+        # No survival engine on this interpreter (no lifelines and no R survival
+        # package). That must be an explicit, explained skip - never a fabricated
+        # ready result or a fake curve.
+        assert result.reason
+        assert result.logrank_p is None
+        assert result.cox_hr is None
+        skipped_figure = tmp_path / "fig" / "km_curve.png"
+        assert skipped_figure.is_file()
+        return
     assert result.status == "ready", result.reason
     assert result.engine in {"lifelines", "r_survival"}
     assert result.logrank_p is not None and result.logrank_p < 0.05
     assert result.n_samples == n
     assert Path(result.figure_path).is_file()
+    assert not result.km_table.empty
+
+
+def test_lifelines_engine_produces_significant_logrank_when_installed(tmp_path: Path):
+    """When lifelines is available the real statistic must be computed."""
+    pytest.importorskip("lifelines")
+    n = 30
+    ids = [f"S{i}" for i in range(n)]
+    time = np.array([6.0] * 15 + [40.0] * 15)
+    event = np.array([1] * 15 + [0] * 15)
+    order = np.random.default_rng(42).permutation(n)
+    clinical = pd.DataFrame({"sample_id": [ids[i] for i in order],
+                             "survival_time": time[order], "event": event[order]})
+    expression = pd.Series([2.0] * 15 + [0.0] * 15, index=ids)
+    result = survival_backend.run_survival_analysis(
+        clinical, expression,
+        figures_dir=tmp_path / "fig", tables_dir=tmp_path / "tab", label="GENE",
+    )
+    assert result.status == "ready"
+    assert result.engine == "lifelines"
+    assert result.logrank_p is not None and result.logrank_p < 0.05
     assert not result.km_table.empty
 
 
