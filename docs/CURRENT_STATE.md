@@ -4,12 +4,12 @@
 
 ## 服务器基线
 
-- 正式根目录：`/shared/shen/2026/ultimate`
+- 正式根目录：`${ULTIMATE_ROOT}`
 - 当前体积约：`27G`
-- 已完成 validation guard 标准化：`/shared/shen/2026/ultimate/audits/validation_guard_latest/validation_guard_check.tsv`
-- 验证总索引：`/shared/shen/2026/ultimate/reports/validation_index/validation_index.tsv`
-- 生产审计：`/shared/shen/2026/ultimate/audits/production_readiness_latest/production_audit.json`
-- 肿瘤单细胞专项验证：`/shared/shen/2026/ultimate/validations/slurm_tumor_sc_maynard_raw_counts`
+- 已完成 validation guard 标准化：`${ULTIMATE_ROOT}/audits/validation_guard_latest/validation_guard_check.tsv`
+- 验证总索引：`${ULTIMATE_ROOT}/reports/validation_index/validation_index.tsv`
+- 生产审计：`${ULTIMATE_ROOT}/audits/production_readiness_latest/production_audit.json`
+- 肿瘤单细胞专项验证：`${ULTIMATE_ROOT}/validations/slurm_tumor_sc_maynard_raw_counts`
 
 ## 已通过状态
 

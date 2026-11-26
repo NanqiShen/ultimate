@@ -255,6 +255,37 @@ def handoff_check_command(root: Path, output_dir: Path | None) -> None:
         raise click.ClickException("handoff-check blocked: " + ",".join(manifest.get("blockers") or []))
 
 
+@main.command("prepare-upstream")
+@click.option("--route", type=click.Choice(["salmon", "starsolo"]), required=True, help="Open-source upstream route without nextflow/apptainer.")
+@click.option("--samplesheet", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True, help="FASTQ samplesheet.tsv (sample, fastq_1, fastq_2).")
+@click.option("--index", type=click.Path(path_type=Path), default=None, help="salmon index dir (salmon) or STAR genome index dir (starsolo).")
+@click.option("--fastq-dir", type=click.Path(path_type=Path, exists=True, file_okay=False), default=None, help="Base directory for relative FASTQ paths.")
+@click.option("--output-dir", type=click.Path(path_type=Path), required=True, help="Directory to write the reviewable job package into.")
+@click.option("--threads", type=click.IntRange(min=1), help="Requested thread count; capped by Slurm and CPU affinity.")
+def prepare_upstream_command(
+    route: str,
+    samplesheet: Path,
+    index: Path | None,
+    fastq_dir: Path | None,
+    output_dir: Path,
+    threads: int | None,
+) -> None:
+    """Generate a reviewable Slurm upstream job package (never auto-submitted)."""
+    from ultimate.prepare_upstream import prepare_upstream_package
+
+    result = prepare_upstream_package(
+        route=route,
+        samplesheet=samplesheet,
+        output_dir=output_dir,
+        index=index,
+        fastq_dir=fastq_dir,
+        threads=threads,
+    )
+    click.echo(json.dumps(result.to_manifest(), indent=2, ensure_ascii=False))
+    if result.status != "ready":
+        raise click.ClickException("prepare-upstream blocked: " + (result.blocked_reason or "unknown"))
+
+
 @main.command("raw-upstream-evidence")
 @click.option("--module", "module_name", type=click.Choice(["rnaseq", "scrna"]), required=True)
 @click.option("--input-path", type=click.Path(path_type=Path), required=True)

@@ -95,6 +95,8 @@ def run_triage(request_path: Path, output_dir: Path) -> dict[str, Any]:
         )
         if "handoff_required" not in presets:
             presets.append("handoff_required")
+        for hint in _prepare_upstream_hints(modules):
+            risk_rows.append(_risk("upstream_route", hint["route"], hint["status"], hint["message"]))
     elif not input_assessment["standard_input_detected"] and not input_assessment["raw_upstream_detected"]:
         risk_rows.append(_risk("input", "data_path", "input_path_not_declared", "未在 request 或样本表中检测到明确数据路径；需要人工确认输入列。"))
 
@@ -526,6 +528,42 @@ def _missing_sample_columns(samplesheet_frame: Any, modules: list[str]) -> list[
             if column not in columns and column not in missing:
                 missing.append(column)
     return missing
+
+
+def _prepare_upstream_hints(modules: list[str]) -> list[dict[str, str]]:
+    """Recommend `ultimate prepare-upstream` routes for FASTQ inputs.
+
+    nf-core handoff stays the default recommendation; this adds the open-source
+    salmon/STARsolo route that works on compute_pro without nextflow/apptainer.
+    """
+    hints: list[dict[str, str]] = []
+    tool_groups = {
+        "salmon": ("salmon", "fastp"),
+        "starsolo": ("STAR",),
+    }
+    module_route = {
+        "rnaseq": ("salmon",),
+        "scrna": ("starsolo",),
+    }
+    want: list[str] = []
+    for module in modules:
+        want.extend(module_route.get(module, ()))
+    if not want:
+        want = ["salmon", "starsolo"]
+    for route in dict.fromkeys(want):
+        tools = tool_groups[route]
+        missing = [tool for tool in tools if shutil.which(tool) is None]
+        if missing:
+            status = "needs_dependency"
+            message = (
+                f"本地 Slurm 开源上游路线（{route}）需要 {', '.join(tools)}；当前 PATH 缺少 {', '.join(missing)}。"
+                f"可先用 slurm/xielab_setup_upstream_env.sbatch 构建 ultimate-upstream，再执行 ultimate prepare-upstream --route {route}。"
+            )
+        else:
+            status = "available"
+            message = f"可用开源上游路线（{route}）：ultimate prepare-upstream --route {route} --samplesheet <samplesheet.tsv> --index <index>。"
+        hints.append({"route": route, "status": status, "message": message})
+    return hints
 
 
 def _write_handoff_plan(path: Path, modules: list[str], input_assessment: dict[str, Any]) -> Path:

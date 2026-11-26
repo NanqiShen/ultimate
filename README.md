@@ -6,7 +6,7 @@ Current status: [V4.5 service-readiness freeze](docs/status/V4_5_SERVICE_READINE
 human/mouse multi-omics analysis delivery under the formal remote project root:
 
 ```text
-/shared/shen/2026/ultimate
+${ULTIMATE_ROOT}
 ```
 
 The user provides raw data paths, available sample information, organism/group
@@ -93,15 +93,15 @@ ultimate init-project --type all --output-dir example_projects/demo_all --demo-d
 ultimate preflight --config example_projects/demo_all/config/project.yaml
 ultimate run --config example_projects/demo_all/config/project.yaml
 ultimate report --run-dir example_projects/demo_all/runs/demo_all
-ultimate delivery-check --run-dir /shared/shen/2026/ultimate/jobs/<job_id>
-ultimate handoff-check --root /shared/shen/2026/ultimate
+ultimate delivery-check --run-dir ${ULTIMATE_ROOT}/jobs/<job_id>
+ultimate handoff-check --root ${ULTIMATE_ROOT}
 ultimate styles --style soft_color --output-dir example_projects/style_review
-ultimate audit-production --root /shared/shen/2026/ultimate
-ultimate audit-backends --root /shared/shen/2026/ultimate
-ultimate audit-modules --output-dir /shared/shen/2026/ultimate/audits/module_standardization_latest
-ultimate prepare-intake --root /shared/shen/2026/ultimate --output-dir /shared/shen/2026/ultimate/intake_packages/latest --refresh-audit
-ultimate audit-tools --root /shared/shen/2026/ultimate
-ultimate trial-tools --root /shared/shen/2026/ultimate --batch scrna_core --no-install
+ultimate audit-production --root ${ULTIMATE_ROOT}
+ultimate audit-backends --root ${ULTIMATE_ROOT}
+ultimate audit-modules --output-dir ${ULTIMATE_ROOT}/audits/module_standardization_latest
+ultimate prepare-intake --root ${ULTIMATE_ROOT} --output-dir ${ULTIMATE_ROOT}/intake_packages/latest --refresh-audit
+ultimate audit-tools --root ${ULTIMATE_ROOT}
+ultimate trial-tools --root ${ULTIMATE_ROOT} --batch scrna_core --no-install
 pytest -q
 ```
 
@@ -116,12 +116,12 @@ promoted to formal automatic results.
 
 ```bash
 ultimate audit-backends \
-  --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/audits/backends_latest
+  --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/audits/backends_latest
 
-python /shared/shen/2026/ultimate/01_tools/write_v3_status_report.py \
-  --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/reports
+python ${ULTIMATE_ROOT}/01_tools/write_v3_status_report.py \
+  --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/reports
 ```
 
 Backend fields are written into preflight, module manifests, reports, and
@@ -176,9 +176,9 @@ not delivery evidence.
 Slurm validation entrypoints:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/scrna_cellchat_validation.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/scrna_nichenet_validation.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/scatac_chromvar_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/scrna_cellchat_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/scrna_nichenet_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/scatac_chromvar_validation.sbatch
 ```
 
 CellChat results are ligand-receptor candidates, not direct mechanism proof.
@@ -197,7 +197,7 @@ Slurm job id, reproducibility files, and a passing delivery QA gate.
 The delivery QA gate is:
 
 ```bash
-ultimate delivery-check --run-dir /shared/shen/2026/ultimate/jobs/<job_id>
+ultimate delivery-check --run-dir ${ULTIMATE_ROOT}/jobs/<job_id>
 ```
 
 `delivery-check` accepts either a concrete run directory with
@@ -224,10 +224,10 @@ It blocks delivery when any required evidence is missing, including:
 - report warning text that preserves interpretation boundaries
 
 The V3.3 rehearsal suite submits three internal production-style jobs under
-`/shared/shen/2026/ultimate/jobs/<job_id>/`:
+`${ULTIMATE_ROOT}/jobs/<job_id>/`:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v3_3_production_rehearsal.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v3_3_production_rehearsal.sbatch
 ```
 
 The suite covers:
@@ -244,7 +244,7 @@ and reproducible-code package. These runs use
 After the suite, refresh the status reports:
 
 ```bash
-ROOT=/shared/shen/2026/ultimate
+ROOT=${ULTIMATE_ROOT}
 PY=$ROOT/.conda/envs/ultimate-core/bin/python
 
 $PY -m ultimate.cli validation-index --root $ROOT \
@@ -265,7 +265,7 @@ and presets that still require manual review.
 The raw upstream handoff QA gate is:
 
 ```bash
-ultimate handoff-check --root /shared/shen/2026/ultimate
+ultimate handoff-check --root ${ULTIMATE_ROOT}
 ```
 
 It writes `audits/handoff_latest/handoff_check_manifest.json` and
@@ -286,19 +286,19 @@ next order-ready modules:
 Submit the rehearsal suite with:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v3_4_order_ready_rehearsal.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v3_4_order_ready_rehearsal.sbatch
 ```
 
 Each rehearsal job writes its own
 `jobs/<job_id>/{config,samples,runs,logs,deliverables,reproducible_code,raw_links}/`
 tree, stamps `delivery_scope=internal_rehearsal`, generates a
 `production_approval.json`, and runs `ultimate delivery-check --run-dir
-/shared/shen/2026/ultimate/jobs/<job_id>`.
+${ULTIMATE_ROOT}/jobs/<job_id>`.
 
 After the suite, refresh the server-side metadata views with:
 
 ```bash
-ROOT=/shared/shen/2026/ultimate
+ROOT=${ULTIMATE_ROOT}
 PY=$ROOT/.conda/envs/ultimate-core/bin/python
 
 $PY -m ultimate.cli validation-index --root $ROOT \
@@ -312,10 +312,10 @@ $PY -m ultimate.cli audit-backends --root $ROOT \
 For a lightweight developer sanity check before syncing local changes, run:
 
 ```bash
-bash /shared/shen/2026/ultimate/scripts/check_dev_entrypoint.sh --mode local
+bash ${ULTIMATE_ROOT}/scripts/check_dev_entrypoint.sh --mode local
 ```
 
-Use `--mode remote` only for short shared-root checks through `hpc-run`; full
+Use `--mode remote` only for short shared-root checks through SSH (set `ULTIMATE_SSH`); full
 validation and rehearsal execution still belong on Slurm.
 
 ### V3.8 Multiomics Publication Rehearsal
@@ -329,11 +329,11 @@ plus a passing `delivery-check` is considered order-ready evidence.
 Submit the V3.8 suite with:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v3_8_multiomics_publication_rehearsal.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v3_8_multiomics_publication_rehearsal.sbatch
 ```
 
 The suite writes one job tree per rehearsal under
-`/shared/shen/2026/ultimate/jobs/<job_id>/` and covers:
+`${ULTIMATE_ROOT}/jobs/<job_id>/` and covers:
 
 - `rnaseq publication`
 - `scrna publication`
@@ -379,7 +379,7 @@ Batch scaffolding is available for intake batches:
 ```bash
 ultimate prepare-batch \
   --batch config/batch_orders.yaml \
-  --root /shared/shen/2026/ultimate
+  --root ${ULTIMATE_ROOT}
 ```
 
 `prepare-batch` only creates prepared job directories, command plans and a
@@ -417,7 +417,7 @@ internal provenance.
 The V4 Alpha rehearsal suite is expected to write:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v4_alpha_customer_delivery_rehearsal.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v4_alpha_customer_delivery_rehearsal.sbatch
 ```
 
 It covers controlled-data rehearsals for:
@@ -460,7 +460,7 @@ mile needed before real customer work:
 The V4 Beta trial suite is expected to write:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v4_beta_customer_trial.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v4_beta_customer_trial.sbatch
 ```
 
 It refreshes `validation-index`, `audit-production`, `audit-backends`, storage
@@ -484,12 +484,12 @@ The V4.1 local audit commands are:
 
 ```bash
 ultimate tool-completeness \
-  --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/audits/tool_completeness_latest
+  --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/audits/tool_completeness_latest
 
 ultimate order-readiness \
-  --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/audits/order_readiness_latest
+  --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/audits/order_readiness_latest
 ```
 
 They write:
@@ -512,8 +512,8 @@ registered tool. Tools that are not retained still need an explicit disposition:
 The V4.1 Slurm evidence scripts are:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v4_1_tool_completeness_audit.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v4_1_order_readiness_rehearsal.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v4_1_tool_completeness_audit.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v4_1_order_readiness_rehearsal.sbatch
 ```
 
 The first script is audit-only and should not run heavy algorithms. The second
@@ -533,9 +533,9 @@ triage -> prepare-job -> preflight -> raw-upstream-evidence -> run -> customer-p
 Two new CLI surfaces support that path:
 
 ```bash
-ultimate customer-package --run-dir /shared/shen/2026/ultimate/jobs/<job_id>
-ultimate batch-status --batch-dir /shared/shen/2026/ultimate/jobs \
-  --output-dir /shared/shen/2026/ultimate/reports/batch_status_v4_2
+ultimate customer-package --run-dir ${ULTIMATE_ROOT}/jobs/<job_id>
+ultimate batch-status --batch-dir ${ULTIMATE_ROOT}/jobs \
+  --output-dir ${ULTIMATE_ROOT}/reports/batch_status_v4_2
 ```
 
 `customer-package` builds a sanitized customer-facing package with
@@ -547,7 +547,7 @@ internal paths and raw-path hints before `delivery-check` evaluates the package.
 The V4.2 Slurm evidence suite is:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v4_2_raw_to_customer_trial.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v4_2_raw_to_customer_trial.sbatch
 ```
 
 It attempts a controlled `rnaseq FASTQ -> tiny count matrix -> customer package`
@@ -567,10 +567,10 @@ multi-module lightweight coverage using existing V3.8 and V4.1 rehearsal
 scripts.
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/v4_pilot_realistic_suite.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/v4_pilot_realistic_suite.sbatch
 ```
 
-The suite writes `/shared/shen/2026/ultimate/reports/v4_pilot_realistic_report.md`,
+The suite writes `${ULTIMATE_ROOT}/reports/v4_pilot_realistic_report.md`,
 `reports/batch_status_v4_pilot/`, `audits/storage_v4_pilot_latest/`, and
 `audits/order_readiness_v4_pilot_latest/`. The pilot report must separate
 `ready`, `blocked`, `handoff-required`, `license-required`,
@@ -602,14 +602,14 @@ not be reported as a formal DMR/DAR result. Public validation is run through
 Slurm:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/scepi_backend_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/scepi_backend_validation.sbatch
 ```
 
 The standalone validation entrypoint is:
 
 ```bash
-python /shared/shen/2026/ultimate/01_tools/validate_scepi_public.py \
-  --output-dir /shared/shen/2026/ultimate/validations/slurm_scepi_matrix
+python ${ULTIMATE_ROOT}/01_tools/validate_scepi_public.py \
+  --output-dir ${ULTIMATE_ROOT}/validations/slurm_scepi_matrix
 ```
 
 Successful validation is `analysis_level=validated_backend`,
@@ -653,15 +653,15 @@ V3.5 的接单前入口会区分标准输入和上游原始输入：
 `validate-scrna` 的验证级路径统一称为 `scrna_mvp`。真实公开数据验证通过 Slurm 运行，不在登录节点做重计算：
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/scrna_mvp_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/scrna_mvp_validation.sbatch
 ```
 
 默认输出在：
 
 ```text
-/shared/shen/2026/ultimate/validation_runs/scrna_mvp_validation/{10x_mtx,h5ad}/
-/shared/shen/2026/ultimate/validation_runs/scrna_mvp_validation/10x_mtx/
-/shared/shen/2026/ultimate/validation_runs/scrna_mvp_validation/h5ad/
+${ULTIMATE_ROOT}/validation_runs/scrna_mvp_validation/{10x_mtx,h5ad}/
+${ULTIMATE_ROOT}/validation_runs/scrna_mvp_validation/10x_mtx/
+${ULTIMATE_ROOT}/validation_runs/scrna_mvp_validation/h5ad/
 ```
 
 每个分支至少应包含：
@@ -694,8 +694,8 @@ When reusable forms and catalogs are useful, create an intake package:
 
 ```bash
 ultimate prepare-intake \
-  --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/intake_packages/latest \
+  --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/intake_packages/latest \
   --refresh-audit
 ```
 
@@ -721,7 +721,7 @@ The standard workbench flow is:
    `input_assessment.tsv`, and `handoff_plan.md`.
 4. Create a job scaffold with `ultimate prepare-job --config
    triage/<job_id>/suggested_project.yaml --job-id <job_id> --root
-   /shared/shen/2026/ultimate`.
+   ${ULTIMATE_ROOT}`.
 5. Run `ultimate preflight --config jobs/<job_id>/config/project.yaml` and resolve missing
    sample columns, paths, references, or licensed tools.
 6. Render a style review with `ultimate styles --style <style_key> --output-dir
@@ -734,9 +734,9 @@ The standard workbench flow is:
 To summarize recent triage evidence:
 
 ```bash
-python /shared/shen/2026/ultimate/01_tools/write_v3_5_intake_ready_report.py \
-  --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/reports
+python ${ULTIMATE_ROOT}/01_tools/write_v3_5_intake_ready_report.py \
+  --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/reports
 ```
 
 ## Validated Run Handoff
@@ -749,12 +749,12 @@ copying large objects, set one of these in the module config:
 modules:
   scrna:
     enabled: true
-    validated_run_dir: /shared/shen/2026/ultimate/validations/slurm_scrna_nsclc_lambrechts
+    validated_run_dir: ${ULTIMATE_ROOT}/validations/slurm_scrna_nsclc_lambrechts
 
   spatial:
     enabled: true
     validation:
-      run_dir: /shared/shen/2026/ultimate/validations/slurm_spatial_squidpy_visium
+      run_dir: ${ULTIMATE_ROOT}/validations/slurm_spatial_squidpy_visium
 ```
 
 `ultimate run` reads the source `run_manifest.json`, indexes existing figures,
@@ -765,18 +765,18 @@ large h5ad/RDS/RData files stay where the validated backend wrote them.
 ## Server Workflow
 
 ```bash
-cd /shared/shen/2026/ultimate
+cd ${ULTIMATE_ROOT}
 bash 01_tools/setup_server_env.sh
 ultimate init-project --type all --output-dir projects/demo_all --demo-data
-ultimate prepare-job --config projects/demo_all/config/project.yaml --job-id demo_all_001 --root /shared/shen/2026/ultimate --run-mode interactive
-hpc-sbatch /shared/shen/2026/ultimate/jobs/demo_all_001/config/run_ultimate.sbatch
+ultimate prepare-job --config projects/demo_all/config/project.yaml --job-id demo_all_001 --root ${ULTIMATE_ROOT} --run-mode interactive
+sbatch ${ULTIMATE_ROOT}/jobs/demo_all_001/config/run_ultimate.sbatch
 ```
 
-`hpc-sbatch` should submit a ready sbatch script. Do not rely on passing extra
+`sbatch` should submit a ready sbatch script. Do not rely on passing extra
 config arguments through the wrapper. For real orders, use `ultimate
 prepare-job` first; it creates `jobs/<job_id>/config/run_ultimate.sbatch`,
 `production_approval.json`, logs, deliverables, and the fixed output directory
-under `/shared/shen/2026/ultimate/jobs/<job_id>/`. Production runs require
+under `${ULTIMATE_ROOT}/jobs/<job_id>/`. Production runs require
 `production_approval.json` with `approved=true` before submission.
 
 Small smoke checks, audits, and environment repairs can run directly on the
@@ -786,19 +786,19 @@ through Slurm. Keep large downloads, conda package caches, and analysis outputs
 on the remote shared filesystem:
 
 ```bash
-hpc-sbatch /shared/shen/2026/ultimate/slurm/singlecell_validation_suite.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/setup_singlecell_envs.sbatch genome_mtdna scrna
-hpc-sbatch /shared/shen/2026/ultimate/slurm/tool_trial_batch.sbatch scrna_core
-hpc-sbatch /shared/shen/2026/ultimate/slurm/download_public_singlecell_data.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/gapfill_specialty_validation.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/tumor_sc_validation.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/setup_bulk_envs.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/prepare_bulk_public_data.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/bulk_validation_suite.sbatch
-hpc-sbatch /shared/shen/2026/ultimate/slurm/validation_index.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/singlecell_validation_suite.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/setup_singlecell_envs.sbatch genome_mtdna scrna
+sbatch ${ULTIMATE_ROOT}/slurm/tool_trial_batch.sbatch scrna_core
+sbatch ${ULTIMATE_ROOT}/slurm/download_public_singlecell_data.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/gapfill_specialty_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/tumor_sc_validation.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/setup_bulk_envs.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/prepare_bulk_public_data.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/bulk_validation_suite.sbatch
+sbatch ${ULTIMATE_ROOT}/slurm/validation_index.sbatch
 ```
 
-The default cache and output locations are under `/shared/shen/2026/ultimate/.conda/`, `/shared/shen/2026/ultimate/public_data/`, `/shared/shen/2026/ultimate/validations/`, and `/shared/shen/2026/ultimate/audits/`.
+The default cache and output locations are under `${ULTIMATE_ROOT}/.conda/`, `${ULTIMATE_ROOT}/public_data/`, `${ULTIMATE_ROOT}/validations/`, and `${ULTIMATE_ROOT}/audits/`.
 
 Every run writes:
 
@@ -818,7 +818,7 @@ The first commands are lightweight metadata checks and may run directly; real
 validation or production-style rehearsals still go through Slurm.
 
 ```bash
-ROOT=/shared/shen/2026/ultimate
+ROOT=${ULTIMATE_ROOT}
 PY=$ROOT/.conda/envs/ultimate-core/bin/python
 export PYTHONPATH=$ROOT/src
 
@@ -854,13 +854,13 @@ The single-cell line is now smoke-validated across the core public/available
 modalities. Refresh the capability matrix and the run index with:
 
 ```bash
-ultimate audit-singlecell --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/audits/singlecell_latest
-ultimate validation-index --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/reports/validation_index
-ultimate audit-modules --root /shared/shen/2026/ultimate \
-  --output-dir /shared/shen/2026/ultimate/audits/module_standardization_latest
-ROOT=/shared/shen/2026/ultimate
+ultimate audit-singlecell --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/audits/singlecell_latest
+ultimate validation-index --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/reports/validation_index
+ultimate audit-modules --root ${ULTIMATE_ROOT} \
+  --output-dir ${ULTIMATE_ROOT}/audits/module_standardization_latest
+ROOT=${ULTIMATE_ROOT}
 $ROOT/.conda/envs/ultimate-core/bin/python $ROOT/01_tools/check_validation_manifests.py \
   --root $ROOT \
   --validations-dir $ROOT/validations \
@@ -900,10 +900,10 @@ jobs install and smoke-test one small batch at a time so the platform does not
 grow into a fragile mega-environment.
 
 ```bash
-ultimate audit-tools --root /shared/shen/2026/ultimate
-ultimate trial-tools --root /shared/shen/2026/ultimate --batch scrna_core --no-install
-ULTIMATE_TRIAL_INSTALL=1 hpc-sbatch /shared/shen/2026/ultimate/slurm/tool_trial_batch.sbatch scrna_core
-ultimate prune-tools --root /shared/shen/2026/ultimate
+ultimate audit-tools --root ${ULTIMATE_ROOT}
+ultimate trial-tools --root ${ULTIMATE_ROOT} --batch scrna_core --no-install
+ULTIMATE_TRIAL_INSTALL=1 sbatch ${ULTIMATE_ROOT}/slurm/tool_trial_batch.sbatch scrna_core
+ultimate prune-tools --root ${ULTIMATE_ROOT}
 ```
 
 The default reusable environments are `ultimate-core`, `ultimate-scrna`,

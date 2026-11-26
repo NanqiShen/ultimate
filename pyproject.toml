@@ -105,8 +105,8 @@ ultimate = ["templates/*.j2"]
 # default config used by init-project, the job Slurm wrapper, and env defs.
 "share/ultimate/scripts/R" = ["scripts/R/*.R"]
 "share/ultimate/config" = ["config/default.yaml"]
-"share/ultimate/slurm" = ["slurm/ultimate_run.sbatch", "slurm/xielab_setup_runtime_envs.sbatch"]
-"share/ultimate/envs" = ["envs/xielab.core.yml", "envs/xielab.scrna.py.yml", "envs/xielab.bio.r.yml"]
+"share/ultimate/slurm" = ["slurm/ultimate_run.sbatch", "slurm/xielab_setup_runtime_envs.sbatch", "slurm/xielab_setup_upstream_env.sbatch", "slurm/upstream_bulk_rnaseq_salmon.sbatch", "slurm/upstream_scrna_starsolo.sbatch", "slurm/xielab_e2e_regression_suite.sbatch"]
+"share/ultimate/envs" = ["envs/xielab.core.yml", "envs/xielab.scrna.py.yml", "envs/xielab.bio.r.yml", "envs/xielab.upstream.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

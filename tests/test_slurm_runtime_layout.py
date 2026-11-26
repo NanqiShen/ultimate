@@ -82,8 +82,19 @@ def test_core_env_scripts_prefer_runtime_root():
             continue
         checked += 1
         assert "ULTIMATE_RUNTIME_ROOT" in text, script.name
-        runtime = text.index('"$RUNTIME_ROOT/envs/ultimate-core"')
-        conda = text.index('"$PROJECT_ROOT/.conda/envs/ultimate-core"')
+        # A script may reach the runtime envs via either $RUNTIME_ROOT or
+        # $ENV_ROOT, as long as the runtime path is resolved before any
+        # in-checkout fallback.
+        runtime_markers = (
+            '"$RUNTIME_ROOT/envs/ultimate-core"',
+            '"$ENV_ROOT/ultimate-core"',
+            "$RUNTIME_ROOT/envs/ultimate-core",
+            "$ENV_ROOT/ultimate-core",
+        )
+        runtime = min((text.index(m) for m in runtime_markers if m in text), default=-1)
+        assert runtime >= 0, script.name
+        conda_markers = ('"$PROJECT_ROOT/.conda/envs/ultimate-core"', "$PROJECT_ROOT/.conda/envs/ultimate-core")
+        conda = min((text.index(m) for m in conda_markers if m in text), default=len(text))
         assert runtime < conda, script.name
     assert checked >= 40
 
