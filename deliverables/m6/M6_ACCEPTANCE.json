@@ -1,9 +1,9 @@
 {
-  "schema": "ultimate.m6.acceptance.v5",
-  "generated_at": "2026-11-26T14:03:12.882361+00:00",
-  "phase": "M6-P0-Final-Residual-Signed",
+  "schema": "ultimate.m6.acceptance.v6",
+  "generated_at": "2026-11-27T02:37:38.897745+00:00",
+  "phase": "M6-P0-Public-Entrypoint-Loop-Closed",
   "overall_status": "BLOCKED",
-  "status_reason": "M6-P0 residual acceptance items are fully resolved and locally verified (618 passed, 26 skipped, 0 failed). Strict sample_id -> input_path binding and universal 10x matrix parsing across all declared samples are confirmed. P0 is complete and ready for sign-off. Overall M6 status remains strictly BLOCKED until P1 cluster execution is approved and completed.",
+  "status_reason": "M6-P0 public entrypoint loop is completely closed and fully verified end-to-end locally (618 passed, 26 skipped, 0 failed). The generated STARsolo config directly passes ultimate run preflight without manual YAML editing, acceptance strictly validates the final run_manifest.json scRNA runtime records, and genuine multi-sample end-to-end execution with different dimensions (S1 2x2, S2 3x4) succeeds across the full toolchain. P0 is fully completed and ready for sign-off. Overall M6 status remains strictly BLOCKED until P1 cluster execution is approved and completed.",
   "commit_lineage": {
     "reported_m5_review_commit": "43d6e7e",
     "actual_baseline_commit": "4b80344",
@@ -16,20 +16,28 @@
     "p0_targeted_resigned_code_commit": "0193068",
     "p0_targeted_resigned_receipt_commit": "d623464",
     "p0_residual_fixed_code_commit": "5830cca",
+    "p0_residual_receipt_commit": "915c6cd",
+    "p0_public_loop_code_commit": "3b0dcdb",
     "receipt_commit": "HEAD"
   },
-  "residual_acceptance_specifications": [
+  "public_entrypoint_loop_specifications": [
     {
-      "id": "RESIDUAL-1-PATH-BINDING",
-      "title": "Strict sample_id -> normalized input_path -> triad files/hashes -> raw dimensions binding",
+      "id": "LOOP-1-STAR_CONFIG_SAMPLESHEET",
+      "title": "STARsolo config includes normalized samplesheet for ultimate run preflight",
       "status": "pass",
-      "detail": "check_downstream_consumed now verifies that each sample's resolved input_path in downstream manifest matches its expected upstream directory exactly. Swapping S1 and S2 input_path while keeping path sets equal fails immediately with sample_input_path:S1 and sample_input_path:S2."
+      "detail": "prepare-upstream now renders top-level samples: samplesheet: {samplesheet} and modules.scrna.samplesheet in expected_import_project.yaml, reusing the identical normalized table so ultimate run preflight passes without manual edits or secondary sample definitions."
     },
     {
-      "id": "RESIDUAL-2-UNIVERSAL-PARSING",
-      "title": "Universal 10x matrix parsing before evidence issuance across all declared samples",
+      "id": "LOOP-2-ACCEPTANCE_READS_SCRNA_RUNTIME_RECORD",
+      "title": "Acceptance reads scRNA module runtime ingestion record from final run_manifest.json",
       "status": "pass",
-      "detail": "Moved _parse_10x_matrix_strict to the front of run_scrna_validation so that all declared samples are parsed and their matrices verified independently regardless of scanpy presence. Accurately tags validation_scope as '10x_upstream_import_acceptance' and import_mode as 'strict_matrix_market_ingest' without claiming scanpy analysis."
+      "detail": "upstream_acceptance.py extracts the scRNA module record from payload['modules'] or payload['samples'], verifying genuine sample-by-sample ingestion, exact dimensions, and triad SHA-256 without fabricating evidence. Import-only runs are explicitly tagged as import verification with delivery_allowed=false."
+    },
+    {
+      "id": "LOOP-3-END_TO_END_CHAIN",
+      "title": "End-to-end chain replacing internal function calls with public CLI/pipeline",
+      "status": "pass",
+      "detail": "test_real_local_ingestion_produces_accepted_manifests executes the complete chain: prepare-upstream -> ultimate run on untouched YAML -> check-upstream-acceptance. With two genuinely different sample inputs (S1 2x2, S2 3x4), both commands exit 0 and acceptance explicitly lists all S1 and S2 checks as passed. Path-swap and tampered-file counterexamples are retained."
     }
   ],
   "counterexample_regressions": [
@@ -81,15 +89,15 @@
   "verification_evidence": {
     "m6_contract_tests": {
       "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py",
-      "result": "30 passed, 1 warning in 19.14s"
+      "result": "30 passed, 1 warning in 61.72s (0:01:01)"
     },
     "all_upstream_related_tests": {
       "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py tests/test_prepare_upstream.py tests/test_cli.py tests/test_slurm_runtime_layout.py tests/test_handoff_check.py",
-      "result": "143 passed, 1 warning in 43.79s"
+      "result": "143 passed, 1 warning in 118.96s (0:01:58)"
     },
     "full_pytest_suite": {
       "command": "/opt/anaconda3/bin/pytest -q",
-      "result": "618 passed, 26 skipped, 6 warnings in 460.56s (0:07:40), exit code: 0"
+      "result": "618 passed, 26 skipped, 6 warnings in 774.78s (0:12:54), exit code: 0"
     },
     "sbatch_syntax_check": {
       "command": "bash -n slurm/*.sbatch (60 scripts)",
@@ -192,17 +200,17 @@
     }
   ],
   "artifacts_sha256": {
-    "src/ultimate/cli.py": "fa702872e0282b2d5a24131cfa2f7d4d0418bea38a0e90b2270307da610574d2",
-    "src/ultimate/upstream_acceptance.py": "9bdfb74fc282e31fd536805f825eef1dda136feaf1481ff1f91bd517baacb9c1",
-    "src/ultimate/prepare_upstream.py": "66cfcef74faca9b78c45c87d4db4f3fc56f34c4d9d8b97f27ce8bd0799f9bac8",
+    "src/ultimate/cli.py": "70ae4da08c445c2401fd5d847b3b772481d254d2fc2a24f3b2579723f201c574",
+    "src/ultimate/upstream_acceptance.py": "92e773a356c1c9654bd76e001deaf94986e5814874c23f4d87d3b7ff27312a52",
+    "src/ultimate/prepare_upstream.py": "9bc8f0040a23baff8fa9297fd60f856c11724419adeac3b904cf332145171582",
     "src/ultimate/bulk.py": "cd57ccbf749445ac973284f794b9c1b0051dc1077876f217357f921cc1aa9eae",
-    "src/ultimate/pipeline.py": "b7690daf16295712eef3b1fed79cfb2b09972e014fa0750af79d0ff44bf4ce04",
+    "src/ultimate/pipeline.py": "0b0c1ec6e20e7bd76ac3e84562b36c5032e49a9e7f88fc5e66883af43fca8aab",
     "src/ultimate/scrna_smoke.py": "b4f2b673db051ffe806709d375d2db56845e37fe62d4cd3be2851dc8b2da2859",
     "src/ultimate/modules/runner.py": "9be74ccdb544ee6893f4c793bec387e565c9404bf0b59194c93733ff62c6ab85",
     "slurm/upstream_bulk_rnaseq_salmon.sbatch": "eb1437e0b83be9021a78e03700c23d1cd6c63f789c291146d02db8e6b4878d8f",
     "slurm/upstream_scrna_starsolo.sbatch": "df00380d0d332bd3eb9db3b41e2fe76cbb127087c70dd7ca4ed8b1818c493578",
     "slurm/xielab_e2e_regression_suite.sbatch": "f3151ece587a51ccfbf4afda865ab5f9e8a581fd60c275a546b6b8efa120907a",
-    "tests/test_m6_upstream_contract.py": "ff1e72c6bebc0e49f1421df99aeca6830995b5ab4e576f519f91fff4c29f3980"
+    "tests/test_m6_upstream_contract.py": "a9ad2cd466a5dfeb4bb92c5ecde7d27884e1a3c8efbae587e9d8f1e6e59cb375"
   },
   "compliance": {
     "foodie_completely_excluded": true,
