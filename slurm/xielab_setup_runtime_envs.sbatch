@@ -36,7 +36,7 @@ echo "[xielab_envs] project_root=$PROJECT_ROOT"
 echo "[xielab_envs] runtime_root=$RUNTIME_ROOT"
 echo "[xielab_envs] env_root=$ENV_ROOT"
 
-mkdir -p "$ENV_ROOT" "$RUNTIME_ROOT/logs" "$MICROMAMBA_ROOT/pkgs"
+mkdir -p "$ENV_ROOT" "$RUNTIME_ROOT/logs" "$RUNTIME_ROOT/manifests" "$MICROMAMBA_ROOT/pkgs"
 
 if [[ ! -x "$MAMBA" ]]; then
   echo "micromamba not found at $MAMBA" >&2
@@ -90,7 +90,17 @@ for key in "${requested[@]}"; do
   echo "[xielab_envs] building $name from $file -> $prefix (log: $log)"
   if "$MAMBA" env update --prefix "$prefix" --file "$definition" --prune > "$log" 2>&1 \
      || "$MAMBA" create --prefix "$prefix" --file "$definition" --yes >> "$log" 2>&1; then
-    printf '%s\tready\t%s\t%s\n' "$key" "$prefix" "$log" >> "$status_file"
+    if [[ "$key" == "core" ]]; then
+      if "$prefix/bin/python" -m pip install --no-deps --no-build-isolation -e "$PROJECT_ROOT" >> "$log" 2>&1; then
+        printf '%s\tready\t%s\t%s\n' "$key" "$prefix" "$log" >> "$status_file"
+      else
+        printf '%s\tfailed\t%s\t%s\n' "$key" "$prefix" "$log" >> "$status_file"
+        echo "[xielab_envs] FAILED installing $PROJECT_ROOT into $name; see $log" >&2
+        overall=1
+      fi
+    else
+      printf '%s\tready\t%s\t%s\n' "$key" "$prefix" "$log" >> "$status_file"
+    fi
   else
     printf '%s\tfailed\t%s\t%s\n' "$key" "$prefix" "$log" >> "$status_file"
     echo "[xielab_envs] FAILED building $name; see $log" >&2

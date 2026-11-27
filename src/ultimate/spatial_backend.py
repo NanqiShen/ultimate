@@ -728,13 +728,17 @@ def _run_squidpy_neighborhood(
     try:
         import anndata as ad
         import squidpy as sq
-        from scipy.sparse import csr_matrix
+        try:
+            from scipy.sparse import csr_matrix
+        except ImportError:  # Allow lightweight AnnData stand-ins in minimal environments.
+            csr_matrix = None
 
         matrix = np.asarray(data.get("matrix"), dtype=float)
         coords = np.asarray(data.get("coords"), dtype=float)
         features = list(map(str, data["features"]))
         obs = pd.DataFrame({"spot": [str(x) for x in data.get("spots", range(coords.shape[0]))]}, index=[str(x) for x in data.get("spots", range(coords.shape[0]))])
-        adata = ad.AnnData(X=csr_matrix(matrix), obs=obs)
+        adata_x = csr_matrix(matrix) if csr_matrix is not None else matrix
+        adata = ad.AnnData(X=adata_x, obs=obs)
         adata.var_names = features
         adata.obsm["spatial"] = coords
         with _thread_budget():

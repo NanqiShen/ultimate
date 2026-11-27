@@ -80,7 +80,7 @@ if [[ "$(wc -l < "$OUT_DIR/tables/samples_parsed.tsv")" -lt 2 ]]; then
 fi
 
 : > "$OUT_DIR/tables/quant_files.txt"
-while IFS=$'\t' read -r sample r1 r2 strandedness; do
+while IFS=$'\t' read -r sample r1 r2 strandedness _condition; do
   [[ -z "$sample" ]] && continue
   case "$r1" in /*) fq1="$r1" ;; *) fq1="$FASTQ_DIR/$r1" ;; esac
   if [[ ! -r "$fq1" ]]; then
@@ -98,15 +98,16 @@ while IFS=$'\t' read -r sample r1 r2 strandedness; do
   echo "[upstream_bulk] fastp $sample"
   fastp "${fastp_args[@]}" 2>> "$OUT_DIR/logs/${sample}.fastp.log"
 
-  salmon_args=(-p "$THREADS" --libType "A" -i "$INDEX" -1 "$OUT_DIR/fastp/${sample}_R1.trim.fq.gz")
   if [[ -f "$OUT_DIR/fastp/${sample}_R2.trim.fq.gz" ]]; then
-    salmon_args+=(-2 "$OUT_DIR/fastp/${sample}_R2.trim.fq.gz")
+    salmon_args=(-p "$THREADS" --libType "A" -i "$INDEX" -1 "$OUT_DIR/fastp/${sample}_R1.trim.fq.gz" -2 "$OUT_DIR/fastp/${sample}_R2.trim.fq.gz")
+  else
+    salmon_args=(-p "$THREADS" --libType "A" -i "$INDEX" -r "$OUT_DIR/fastp/${sample}_R1.trim.fq.gz")
   fi
   echo "[upstream_bulk] salmon quant $sample"
   salmon quant "${salmon_args[@]}" -o "$OUT_DIR/quant/${sample}" \
     > "$OUT_DIR/logs/${sample}.salmon.log" 2>&1
   echo -e "${sample}\t$OUT_DIR/quant/${sample}/quant.sf" >> "$OUT_DIR/tables/quant_files.txt"
-done < "$OUT_DIR/tables/samples_parsed.tsv"
+done < <(tail -n +2 "$OUT_DIR/tables/samples_parsed.tsv")
 
 python3 - "$OUT_DIR" <<'PY'
 import sys

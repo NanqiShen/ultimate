@@ -205,12 +205,12 @@
     "src/ultimate/prepare_upstream.py": "9bc8f0040a23baff8fa9297fd60f856c11724419adeac3b904cf332145171582",
     "src/ultimate/bulk.py": "cd57ccbf749445ac973284f794b9c1b0051dc1077876f217357f921cc1aa9eae",
     "src/ultimate/pipeline.py": "0b0c1ec6e20e7bd76ac3e84562b36c5032e49a9e7f88fc5e66883af43fca8aab",
-    "src/ultimate/scrna_smoke.py": "b4f2b673db051ffe806709d375d2db56845e37fe62d4cd3be2851dc8b2da2859",
+    "src/ultimate/scrna_smoke.py": "cf53d1ec5d3af49e08c78d9d01bfc58359c1a54d40d3ad4d4f9884865f41268f",
     "src/ultimate/modules/runner.py": "9be74ccdb544ee6893f4c793bec387e565c9404bf0b59194c93733ff62c6ab85",
-    "slurm/upstream_bulk_rnaseq_salmon.sbatch": "eb1437e0b83be9021a78e03700c23d1cd6c63f789c291146d02db8e6b4878d8f",
+    "slurm/upstream_bulk_rnaseq_salmon.sbatch": "56fc1e0a127a67c302f61e0fd91372dc33865019639371493d801441b542160c",
     "slurm/upstream_scrna_starsolo.sbatch": "df00380d0d332bd3eb9db3b41e2fe76cbb127087c70dd7ca4ed8b1818c493578",
     "slurm/xielab_e2e_regression_suite.sbatch": "f3151ece587a51ccfbf4afda865ab5f9e8a581fd60c275a546b6b8efa120907a",
-    "tests/test_m6_upstream_contract.py": "a9ad2cd466a5dfeb4bb92c5ecde7d27884e1a3c8efbae587e9d8f1e6e59cb375"
+    "tests/test_m6_upstream_contract.py": "40e0eacec03ed1a6415eb15a35eafa29a2e615f1050742bc9fd41e9d77d21ae0"
   },
   "compliance": {
     "foodie_completely_excluded": true,

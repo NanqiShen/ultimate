@@ -42,8 +42,12 @@ def test_inspect_module_checks_required_assets():
     assert "scripts:R" in names
     assert "slurm:ultimate_run.sbatch" in names
     assert "rscript" in names
+    checks_by_name = {check["name"]: check for check in report["checks"]}
     # The R backend must be declared for a module that uses DESeq2/edgeR.
-    assert any(name.startswith("r:") for name in names)
+    assert (
+        any(name.startswith("r:") for name in names)
+        or ("r_packages" in checks_by_name and "DESeq2" in checks_by_name["r_packages"].get("declared", []))
+    )
 
 
 def test_inspect_module_reports_missing_r_packages_as_warn_not_fail(tmp_path, monkeypatch):

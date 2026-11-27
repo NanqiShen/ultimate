@@ -197,6 +197,7 @@ def test_r_fallback_uses_requested_module_name(tmp_path: Path, monkeypatch):
 
 def test_welch_t_small_sample_is_not_inflated():
     """Unequal variances with n=4 per group: Welch p must be >= naive z p."""
+    pytest.importorskip("scipy")
     rng = np.random.default_rng(11)
     ctrl = rng.normal(5, 0.5, (20, 4))
     case = rng.normal(5.6, 4.0, (20, 4))  # same mean shift, much larger variance
@@ -212,6 +213,27 @@ def test_welch_t_small_sample_is_not_inflated():
     assert result["df"].max() < 7
     # At least some features must not be declared significant despite the shift.
     assert (result["pvalue"] > 0.05).any()
+
+
+def test_welch_t_fallback_without_scipy_is_honestly_labeled(monkeypatch):
+    import importlib.util
+    from ultimate import bulk as bulk_mod
+
+    orig_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        bulk_mod.importlib.util,
+        "find_spec",
+        lambda name, package=None: None if name == "scipy" else orig_find_spec(name, package),
+    )
+    rng = np.random.default_rng(7)
+    matrix = pd.DataFrame(
+        rng.normal(size=(10, 6)),
+        index=[f"G{i}" for i in range(10)],
+        columns=[f"C{i}" for i in range(3)] + [f"T{i}" for i in range(3)],
+    )
+    result = _two_group_stats(matrix, list(matrix.columns[:3]), list(matrix.columns[3:]))
+    assert (result["test_method"] == "normal_approx_fallback_not_for_production").all()
+    assert (result["df"] == 4.0).all()
 
 
 def test_welch_bh_fdr_is_monotonic():

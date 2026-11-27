@@ -201,6 +201,7 @@ def test_paired_pseudobulk_runs_through_run_pipeline(tmp_path: Path, monkeypatch
         return {"status": "ready", "skip_reason": "", "n_pairs": 6, "engine": "edgeR"}
 
     monkeypatch.setattr("ultimate.scrna_pseudobulk_de.run_scrna_pseudobulk_de", fake_run)
+    monkeypatch.setattr(scrna, "_rscript_str", lambda m: "/usr/bin/Rscript")
     counts = tmp_path / "counts.tsv"
     design = tmp_path / "design.tsv"
     counts.write_text("gene\tS1\tS2\nG1\t5\t6\n", encoding="utf-8")
@@ -231,6 +232,7 @@ def test_paired_pseudobulk_failure_is_explicit_skip(tmp_path: Path, monkeypatch)
         raise RuntimeError("edgeR_failed")
 
     monkeypatch.setattr("ultimate.scrna_pseudobulk_de.run_scrna_pseudobulk_de", boom)
+    monkeypatch.setattr(scrna, "_rscript_str", lambda m: "/usr/bin/Rscript")
     counts = tmp_path / "c.tsv"; counts.write_text("g\tS1\nG1\t1\n", encoding="utf-8")
     design = tmp_path / "d.tsv"; design.write_text("sample\tdonor\tstim\nS1\td1\tctrl\n", encoding="utf-8")
     cfg = {"modules": {"scrna": {"pseudobulk": {

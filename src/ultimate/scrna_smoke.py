@@ -2399,13 +2399,13 @@ def _run_paired_pseudobulk_edger(
         "pseudobulk_paired_backend_status": str(status_path),
         "pseudobulk_paired_de_results": str(result_path),
     }
-    # Route to the R environment that actually owns edgeR.
-    if _rscript_str("scrna") == "":
-        return _paired_skip(backend_id, analysis_level, "dependency_missing:Rscript", status_path, artifacts)
     if not opts["cell_type"]:
         return _paired_skip(backend_id, analysis_level, "missing_cell_type_for_paired_design", status_path, artifacts)
     if not (opts["sce_rda"] or (opts["counts"] and opts["design"])):
         return _paired_skip(backend_id, analysis_level, "missing_paired_input:sce_rda_or_counts+design", status_path, artifacts)
+    # Route to the R environment that actually owns edgeR.
+    if _rscript_str("scrna") == "":
+        return _paired_skip(backend_id, analysis_level, "dependency_missing:Rscript", status_path, artifacts)
 
     from ultimate.scrna_pseudobulk_de import run_scrna_pseudobulk_de
 

@@ -780,3 +780,104 @@ def test_auxiliary_suite_fails_on_non_ready_stage():
     assert 'not_ready=' in text
     assert "exit 1" in text
     assert "ULTIMATE_E2E_ALLOW_SKIP" in text
+
+
+def test_rendered_salmon_sbatch_runs_with_stubs_skips_header_and_handles_pe_and_se(tmp_path: Path):
+    import os
+    import subprocess
+    import sys
+
+    fastq_dir = tmp_path / "fastq"
+    fastq_dir.mkdir()
+    for name in ("S1_R1.fastq.gz", "S1_R2.fastq.gz", "S2_R1.fastq.gz"):
+        with gzip.open(fastq_dir / name, "wt", encoding="utf-8") as handle:
+            handle.write("@r1\nACGT\n+\nIIII\n")
+
+    raw_sheet = tmp_path / "samplesheet.tsv"
+    raw_sheet.write_text(
+        "sample_id\tcondition\tfastq_1\tfastq_2\n"
+        f"S1\tctrl\t{fastq_dir / 'S1_R1.fastq.gz'}\t{fastq_dir / 'S1_R2.fastq.gz'}\n"
+        f"S2\tcase\t{fastq_dir / 'S2_R1.fastq.gz'}\t-\n",
+        encoding="utf-8",
+    )
+
+    index_dir = tmp_path / "salmon_idx"
+    index_dir.mkdir()
+    (index_dir / "versionInfo.json").write_text('{"indexVersion": 5}\n', encoding="utf-8")
+
+    pkg_dir = tmp_path / "pkg"
+    res = prepare_upstream_package(
+        route="salmon",
+        samplesheet=raw_sheet,
+        output_dir=pkg_dir,
+        index=index_dir,
+    )
+    assert res.status == "ready", res.blocked_reason
+    rendered = Path(res.artifacts["run_upstream_sbatch"])
+    assert rendered.is_file()
+
+    upstream_env = tmp_path / "upstream_env"
+    bin_dir = upstream_env / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python3").symlink_to(sys.executable)
+
+    fastp_stub = bin_dir / "fastp"
+    fastp_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "out1=''; out2=''; json=''; html=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  case \"$1\" in\n"
+        "    --out1) out1=\"$2\"; shift 2 ;;\n"
+        "    --out2) out2=\"$2\"; shift 2 ;;\n"
+        "    --json) json=\"$2\"; shift 2 ;;\n"
+        "    --html) html=\"$2\"; shift 2 ;;\n"
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        "mkdir -p \"$(dirname \"$out1\")\"\n"
+        ": > \"$out1\"\n"
+        "[[ -n \"$out2\" ]] && : > \"$out2\"\n"
+        "[[ -n \"$json\" ]] && echo '{}' > \"$json\"\n"
+        "[[ -n \"$html\" ]] && echo '<html></html>' > \"$html\"\n",
+        encoding="utf-8",
+    )
+    fastp_stub.chmod(0o755)
+
+    salmon_log = tmp_path / "salmon_invocations.txt"
+    salmon_stub = bin_dir / "salmon"
+    salmon_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"printf '%s\\n' \"$*\" >> {str(salmon_log)!r}\n"
+        "out=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  case \"$1\" in\n"
+        "    -o) out=\"$2\"; shift 2 ;;\n"
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        "mkdir -p \"$out\"\n"
+        "printf 'Name\\tLength\\tEffectiveLength\\tTPM\\tNumReads\\nGENE1\\t100\\t90\\t100.0\\t12\\n' > \"$out/quant.sf\"\n",
+        encoding="utf-8",
+    )
+    salmon_stub.chmod(0o755)
+
+    env = dict(os.environ)
+    env["ULTIMATE_UPSTREAM_ENV"] = str(upstream_env)
+    proc = subprocess.run(["bash", str(rendered)], env=env, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+    calls = salmon_log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 2
+    assert any("S1_R1.trim.fq.gz" in c and "-2 " in c and "S1_R2.trim.fq.gz" in c for c in calls)
+    assert any("S2_R1.trim.fq.gz" in c and "-r " in c and " -1 " not in c for c in calls)
+    assert not any("sample_id" in c for c in calls)
+
+    upstream_out = pkg_dir / ARTIFACTS_SUBDIR
+    counts_text = (upstream_out / "counts_raw.tsv").read_text(encoding="utf-8")
+    assert "feature_id\tS1\tS2" in counts_text
+    assert "sample_id" not in counts_text
+    manifest = json.loads((upstream_out / "raw_qc_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "ready"
+    assert manifest["n_samples"] == 2

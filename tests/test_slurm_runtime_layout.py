@@ -176,3 +176,12 @@ def test_pyproject_referenced_files_exist():
             if not list(REPO_ROOT.glob(pattern)):
                 missing.append(f"{target_dir}: {pattern}")
     assert missing == []
+
+
+def test_setup_runtime_envs_initializes_manifests_and_installs_core():
+    text = (REPO_ROOT / "slurm" / "xielab_setup_runtime_envs.sbatch").read_text(encoding="utf-8")
+    assert '"$RUNTIME_ROOT/manifests"' in text
+    assert 'pip install --no-deps --no-build-isolation -e "$PROJECT_ROOT"' in text
+    envs_core = (REPO_ROOT / "envs" / "xielab.core.yml").read_text(encoding="utf-8")
+    assert "setuptools" in envs_core
+    assert "wheel" in envs_core
