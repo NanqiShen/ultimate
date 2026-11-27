@@ -453,32 +453,26 @@ def test_real_local_ingestion_produces_accepted_manifests(tmp_path: Path):
     bulk_manifest_path = Path(bulk_run_manifest["output_dir"]) / "run_manifest.json"
     assert bulk_manifest_path.is_file()
 
-    # 2. Real scRNA 10x ingestion: run_scrna_validation reads 10x triad files
+    # 2. End-to-end STARsolo: prepare-upstream -> ultimate run on untouched YAML -> check-upstream-acceptance
     _fastq(tmp_path / "star_real" / "fastq" / "S2_R1.fastq.gz")
     _fastq(tmp_path / "star_real" / "fastq" / "S2_R2.fastq.gz")
     sheet_star = _sheet(
         tmp_path / "star_real",
-        header="sample\tfastq_1\tfastq_2",
-        rows=["S1\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
-              "S2\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
+        header="sample\tcondition\tfastq_1\tfastq_2",
+        rows=["S1\tcontrol\tfastq/S1_R1.fastq.gz\tfastq/S1_R2.fastq.gz",
+              "S2\ttreatment\tfastq/S2_R1.fastq.gz\tfastq/S2_R2.fastq.gz"],
     )
     pkg_star = _package(tmp_path / "star_real", "starsolo", samplesheet=sheet_star)
     sdirs_star, _ = _setup_valid_starsolo(pkg_star, samples=("S1", "S2"))
 
-    # Execute real reading code via scrna_smoke.run_scrna_validation
-    import ultimate.scrna_smoke as scrna_mod
-    scrna_out = tmp_path / "scrna_downstream_run"
-    star_run_manifest = scrna_mod.run_scrna_validation(
-        input_path=sdirs_star[0],
-        input_type="10x_mtx",
-        output_dir=scrna_out,
-        config={"modules": {"scrna": {"samples": [{"sample_id": "S1", "input_path": str(sdirs_star[0])},
-                                                    {"sample_id": "S2", "input_path": str(sdirs_star[1])}]}}},
-    )
-    star_manifest_path = scrna_out / "run_manifest.json"
+    # Execute ultimate run directly on the untouched generated expected_import_project.yaml!
+    untouched_star_yaml = pkg_star / "expected_import_project.yaml"
+    star_run_manifest = run_pipeline_from_config(untouched_star_yaml)
+    assert star_run_manifest["status"] == "ready"
+    star_manifest_path = Path(star_run_manifest["output_dir"]) / "run_manifest.json"
     assert star_manifest_path.is_file()
 
-    # Both real manifests must be strictly accepted under dual-route verification
+    # Both real manifests produced by ultimate run must pass strict dual-route acceptance
     res = runner.invoke(
         main,
         [
@@ -492,6 +486,16 @@ def test_real_local_ingestion_produces_accepted_manifests(tmp_path: Path):
     assert payload["status"] == "pass"
     assert payload["failed_routes"] == []
     assert payload["missing_routes"] == []
+
+    # Verify explicitly that S1 and S2 checks are both listed and passed
+    star_route_checks = next(r["checks"] for r in payload["routes"] if r["route"] == "starsolo")
+    check_names = {c["name"]: c["status"] for c in star_route_checks}
+    assert check_names.get("downstream:sample_parsed:S1") == "pass"
+    assert check_names.get("downstream:sample_input_path:S1") == "pass"
+    assert check_names.get("downstream:sample_dims:S1") == "pass"
+    assert check_names.get("downstream:sample_parsed:S2") == "pass"
+    assert check_names.get("downstream:sample_input_path:S2") == "pass"
+    assert check_names.get("downstream:sample_dims:S2") == "pass"
 
 
 def test_acceptance_counterexample_1_dimensions_mismatch(tmp_path: Path):

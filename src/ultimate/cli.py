@@ -303,11 +303,17 @@ def check_upstream_acceptance_command(
                 m_payload = json.loads(m_file.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            text = json.dumps(m_payload).lower()
-            if "salmon" in text or "rnaseq" in text:
-                manifest_map["salmon"] = m_file
-            elif "starsolo" in text or "scrna" in text or "star" in text:
+
+            # Accurate route detection from structured fields rather than loose text search
+            proj_name = str((m_payload.get("project") or {}).get("name") or "").lower()
+            mod_names = [str(m.get("module") or "").lower() for m in (m_payload.get("modules") or []) if isinstance(m, dict)]
+            top_mod = str(m_payload.get("module") or "").lower()
+            top_input_type = str(m_payload.get("input_type") or "").lower()
+
+            if "starsolo" in proj_name or "scrna" in mod_names or top_mod == "scrna" or top_input_type == "10x_mtx":
                 manifest_map["starsolo"] = m_file
+            elif "salmon" in proj_name or "rnaseq" in mod_names or top_mod == "rnaseq":
+                manifest_map["salmon"] = m_file
 
     route_acceptances: list[RouteAcceptance] = []
     for pkg_item in packages:

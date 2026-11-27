@@ -481,7 +481,19 @@ def check_downstream_consumed(
 
     if expected_sample_dimensions is not None:
         # Single-cell (STARsolo) sample-by-sample check!
-        downstream_samples = payload.get("samples") or []
+        # Read the runtime ingestion records from scRNA module within final run_manifest.json
+        scrna_module = None
+        for mod in payload.get("modules") or []:
+            if isinstance(mod, dict) and mod.get("module") == "scrna":
+                scrna_module = mod
+                break
+
+        downstream_samples = []
+        if scrna_module and isinstance(scrna_module.get("samples"), list) and scrna_module["samples"]:
+            downstream_samples = scrna_module["samples"]
+        elif isinstance(payload.get("samples"), list) and payload["samples"]:
+            downstream_samples = payload["samples"]
+
         sample_lookup: dict[str, dict[str, Any]] = {}
         if isinstance(downstream_samples, list):
             for s_item in downstream_samples:

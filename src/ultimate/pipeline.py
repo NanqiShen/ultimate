@@ -134,6 +134,7 @@ def _run_pipeline(
     n_samples = next((int(mod["n_samples"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_samples"), int)), None)
     n_genes = next((int(mod["n_genes"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_genes"), int)), None)
     n_cells = next((int(mod["n_cells"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_cells"), int)), None)
+    primary_samples = next((mod.get("samples") for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("samples"), list) and mod.get("samples")), None)
     all_checksums = {}
     for mod in module_manifests:
         if isinstance(mod, dict) and isinstance(mod.get("input_checksums"), dict):
@@ -151,6 +152,7 @@ def _run_pipeline(
         "input_path": primary_input_path,
         "input_checksum": primary_checksum,
         "input_checksums": all_checksums,
+        "samples": primary_samples or [],
         "n_features": n_features,
         "n_samples": n_samples,
         "n_genes": n_genes,
