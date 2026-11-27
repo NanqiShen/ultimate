@@ -10,9 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scipy.io import mmread
-
-
 RAW_UPSTREAM_FIELDS = (
     "module",
     "raw_stage",
@@ -385,6 +382,12 @@ def _write_scrna_10x_mtx_matrix(*, input_path: Path, output_matrix: Path) -> Non
     for path in (matrix_path, features_path, barcodes_path):
         if path is None or not path.exists():
             raise FileNotFoundError(f"required 10x MTX file missing: {path}")
+    try:
+        from scipy.io import mmread
+    except ModuleNotFoundError as exc:
+        if exc.name != "scipy":
+            raise
+        raise RuntimeError("Reading 10x Matrix Market inputs requires SciPy; install ultimate-bioinfo[scrna].") from exc
     with _open_text_or_binary(matrix_path, binary=True) as handle:
         matrix = mmread(handle).tocsr()
     features = [line.rstrip("\n").split("\t")[0] for line in _read_lines(features_path)]

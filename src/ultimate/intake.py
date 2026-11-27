@@ -142,7 +142,7 @@ def _write_quickstart(output_dir: Path, root: Path, audit_manifest: dict[str, An
             "ultimate init-project --type <analysis_type> --output-dir <project_dir>",
             "ultimate preflight --config <project_dir>/config/project.yaml",
             "ultimate styles --style soft_color --output-dir <project_dir>/style_review",
-            "hpc-sbatch /shared/shen/2026/ultimate/slurm/ultimate_run.sbatch <project_dir>/config/project.yaml",
+            'sbatch --export=ALL,ULTIMATE_ROOT "${ULTIMATE_ROOT:?set ULTIMATE_ROOT}/slurm/ultimate_run.sbatch" <project_dir>/config/project.yaml',
             "```",
             "",
             "## 接单前必收信息",

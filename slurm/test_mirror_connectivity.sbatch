@@ -1,16 +1,43 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ult_mirror_test
-#SBATCH --output=/shared/shen/2026/ultimate/logs/%x_%j.out
-#SBATCH --error=/shared/shen/2026/ultimate/logs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
 #SBATCH --time=00:20:00
 
 set -euo pipefail
 
-PROJECT_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
-CORE_ENV="${ULTIMATE_CORE_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-core}"
-CONDA_SH="${CONDA_SH:-/share/home/nshen/miniconda3/etc/profile.d/conda.sh}"
+PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" || ! -d "$PROJECT_ROOT/src/ultimate" ]]; then
+  echo "Set ULTIMATE_ROOT to the Ultimate checkout, or submit from its root." >&2
+  exit 2
+fi
+export ULTIMATE_ROOT="$PROJECT_ROOT"
+# Runtime artefacts live beside the code root on shared deployments; fall back to
+# an in-checkout environment only when no runtime environment exists.
+RUNTIME_ROOT="${ULTIMATE_RUNTIME_ROOT:-$(dirname -- "$PROJECT_ROOT")/ultimate_runtime}"
+export ULTIMATE_RUNTIME_ROOT="$RUNTIME_ROOT"
+if [[ -n "${ULTIMATE_CORE_ENV:-}" ]]; then
+  CORE_ENV="$ULTIMATE_CORE_ENV"
+else
+  CORE_ENV=""
+  for candidate in \
+    "$RUNTIME_ROOT/envs/ultimate-core" \
+    "$PROJECT_ROOT/.venv" \
+    "$PROJECT_ROOT/.conda/envs/ultimate-core"
+  do
+    if [[ -x "$candidate/bin/python" ]]; then
+      CORE_ENV="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$CORE_ENV" ]]; then
+    echo "No Ultimate core environment found. Build it with: sbatch slurm/xielab_setup_runtime_envs.sbatch" >&2
+    exit 2
+  fi
+fi
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 CONDARC_PATH="${ULTIMATE_CONDARC:-$PROJECT_ROOT/config/condarc.mirrors.tuna.yml}"
 
 mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/audits/mirror_test"
@@ -41,7 +68,7 @@ for url in urls:
     except Exception as exc:
         rows.append({"url": url, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
-out = Path("/shared/shen/2026/ultimate/audits/mirror_test/connectivity.json")
+out = Path(str(__import__("pathlib").Path(__import__("os").environ["ULTIMATE_ROOT"]) / "audits/mirror_test/connectivity.json"))
 out.write_text(json.dumps({"generated_at": datetime.now(timezone.utc).isoformat(), "results": rows}, indent=2, ensure_ascii=False), encoding="utf-8")
 print(out.read_text(encoding="utf-8"))
 PY

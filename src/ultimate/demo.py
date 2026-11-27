@@ -68,7 +68,6 @@ def init_project(project_type: str, output_dir: Path, *, demo_data: bool = False
             "name": output_dir.name,
             "organism": "human",
             "output_dir": f"../runs/{output_dir.name}",
-            "server_root": "/shared/shen/2026/ultimate",
             "run_mode": "interactive",
             "job_id": output_dir.name,
             "is_demo": bool(demo_data),
@@ -87,17 +86,17 @@ def init_project(project_type: str, output_dir: Path, *, demo_data: bool = False
         "resources": {
             "human": {
                 "genome": "GRCh38",
-                "gtf": "/shared/shen/resources/genomes/human/GRCh38.gtf",
+                "gtf": "@resources/genomes/human/GRCh38.gtf",
                 "orgdb": "org.Hs.eg.db",
             },
             "mouse": {
                 "genome": "GRCm39",
-                "gtf": "/shared/shen/resources/genomes/mouse/GRCm39.gtf",
+                "gtf": "@resources/genomes/mouse/GRCm39.gtf",
                 "orgdb": "org.Mm.eg.db",
             },
-            "msigdb": "/shared/shen/resources/msigdb",
-            "cellchatdb": "/shared/shen/resources/cellchatdb",
-            "public_cache": "/shared/shen/2026/ultimate/cache/publicdb",
+            "msigdb": "@resources/msigdb",
+            "cellchatdb": "@resources/cellchatdb",
+            "public_cache": "@project/cache/publicdb",
         },
         "modules": module_config,
         "report": {

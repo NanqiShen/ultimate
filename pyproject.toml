@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ultimate-bioinfo"
-version = "0.1.0"
+version = "0.1.1rc1"
 description = "CLI-first reproducible multi-omics bioinformatics workbench for HPC delivery."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,11 +18,13 @@ dependencies = [
   "pandas>=2.2",
   "pyyaml>=6.0",
   "seaborn>=0.13",
+  "threadpoolctl>=3.5",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "scipy>=1.12",
 ]
 scrna = [
   "anndata>=0.10",
@@ -100,6 +102,12 @@ ultimate = ["templates/*.j2"]
 "share/ultimate/templates/handoffs/tumor_sc" = ["templates/handoffs/tumor_sc/*"]
 "share/ultimate/templates/handoffs/vdj" = ["templates/handoffs/vdj/*"]
 "share/ultimate/templates/handoffs/wgcna" = ["templates/handoffs/wgcna/*"]
+# Files needed at runtime by non-checkout (wheel) installs: R backends, the
+# default config used by init-project, the job Slurm wrapper, and env defs.
+"share/ultimate/scripts/R" = ["scripts/R/*.R"]
+"share/ultimate/config" = ["config/default.yaml"]
+"share/ultimate/slurm" = ["slurm/ultimate_run.sbatch", "slurm/xielab_setup_runtime_envs.sbatch", "slurm/xielab_setup_upstream_env.sbatch", "slurm/upstream_bulk_rnaseq_salmon.sbatch", "slurm/upstream_scrna_starsolo.sbatch", "slurm/xielab_e2e_regression_suite.sbatch"]
+"share/ultimate/envs" = ["envs/xielab.core.yml", "envs/xielab.scrna.py.yml", "envs/xielab.bio.r.yml", "envs/xielab.upstream.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

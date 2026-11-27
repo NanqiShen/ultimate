@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from ultimate.paths import (
+    default_reference_root,
+    project_root,
+    resolve_path as resolve_path_unified,
+    resource_root,
+)
+
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +41,7 @@ def normalize_config(config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     project.setdefault("name", "ultimate_project")
     project.setdefault("organism", "human")
     project.setdefault("output_dir", "../runs/ultimate_project")
-    project.setdefault("server_root", "/shared/shen/2026/ultimate")
+    project["server_root"] = str(resolve_path(base_dir, project["server_root"])) if project.get("server_root") else str(project_root())
     project.setdefault("run_mode", "interactive")
 
     organism = str(project["organism"]).lower()
@@ -46,7 +53,15 @@ def normalize_config(config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         project["production_approval"] = str(resolve_path(base_dir, project["production_approval"]))
 
     normalized.setdefault("design", {})
-    normalized.setdefault("resources", {})
+    resources = normalized.setdefault("resources", {})
+    _seed_reference_defaults(resources)
+    for group in ("human", "mouse"):
+        organism_resources = resources.get(group)
+        if isinstance(organism_resources, dict) and organism_resources.get("gtf"):
+            organism_resources["gtf"] = str(resolve_resource(base_dir, organism_resources["gtf"], root=Path(project["server_root"])))
+    for key in ("msigdb", "cellchatdb", "public_cache"):
+        if resources.get(key):
+            resources[key] = str(resolve_resource(base_dir, resources[key], root=Path(project["server_root"])))
     report = normalized.setdefault("report", {})
     report.setdefault("style", "soft_color")
     report.setdefault("layout", "clinical_report")
@@ -146,8 +161,36 @@ def normalize_config(config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
 
 
 def resolve_path(base_dir: Path, value: str | Path) -> Path:
-    candidate = Path(value)
-    return candidate if candidate.is_absolute() else (base_dir / candidate).resolve()
+    return resolve_path_unified(base_dir, value)
+
+
+def _seed_reference_defaults(resources: dict[str, Any]) -> None:
+    """Fill reference locations from ``ULTIMATE_REFERENCE_ROOT`` when unset.
+
+    XieLab keeps genome and MSigDB references outside both the code root and
+    the runtime root, so an explicit reference root wins. Values already set in
+    the project file always take precedence and are resolved normally, which
+    keeps the ``@resources/`` and ``@project/`` shorthands working.
+    """
+    reference_root = default_reference_root()
+    if reference_root is None:
+        return
+    for species, assembly in (("human", "GRCh38.gtf"), ("mouse", "GRCm39.gtf")):
+        organism_resources = resources.setdefault(species, {})
+        if isinstance(organism_resources, dict) and not organism_resources.get("gtf"):
+            organism_resources["gtf"] = str(reference_root / "genomes" / species / assembly)
+    for key in ("msigdb", "cellchatdb"):
+        if not resources.get(key):
+            resources[key] = str(reference_root / key)
+
+
+def resolve_resource(base_dir: Path, value: str | Path, *, root: Path) -> Path:
+    value = str(value)
+    if value.startswith("@resources/"):
+        return (resource_root() / value.removeprefix("@resources/")).resolve()
+    if value.startswith("@project/"):
+        return (root / value.removeprefix("@project/")).resolve()
+    return resolve_path(base_dir, value)
 
 
 def output_dir(config: dict[str, Any]) -> Path:

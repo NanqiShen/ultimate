@@ -84,7 +84,7 @@ def test_proteomics_publication_runs_limma_optional_backend(tmp_path: Path) -> N
         "results/tables/proteomics/proteomics_limma_backend_versions.tsv",
         "results/figures/proteomics/proteomics_limma_volcano.png",
         "results/figures/proteomics/proteomics_limma_heatmap.png",
-        "objects/proteomics/proteomics_limma_backend.rds",
+        "objects/proteomics/proteomics_limma_backend.json",
     ]:
         path = run_dir / relative
         assert path.exists() and path.stat().st_size > 0
@@ -115,7 +115,7 @@ def test_methylation_publication_runs_beta_dmp_backend(tmp_path: Path) -> None:
         "results/tables/methylation/methylation_mvalue_summary.tsv",
         "results/figures/methylation/methylation_dmp_volcano.png",
         "results/figures/methylation/methylation_dmp_heatmap.png",
-        "objects/methylation/methylation_dmp_backend.rds",
+        "objects/methylation/methylation_dmp_backend.json",
     ]:
         path = run_dir / relative
         assert path.exists() and path.stat().st_size > 0

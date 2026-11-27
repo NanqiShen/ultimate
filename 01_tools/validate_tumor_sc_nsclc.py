@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import gzip
@@ -40,7 +41,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--max-cells", type=int, default=6000)
     parser.add_argument("--random-seed", type=int, default=11)
-    parser.add_argument("--rscript", type=Path, default=Path("/shared/shen/2026/ultimate/.conda/envs/ultimate-scrna-r/bin/Rscript"))
+    parser.add_argument("--rscript", type=Path, default=Path(str(project_root() / '.conda/envs/ultimate-scrna-r/bin/Rscript')))
     parser.add_argument("--run-copykat", action="store_true", help="Attempt CopyKAT only when raw integer counts are available.")
     parser.add_argument("--run-infercnv", action="store_true", help="Attempt inferCNV only when raw integer counts are available.")
     parser.add_argument("--approve-full-cnv-backend", action="store_true", help="Allow guarded CopyKAT/inferCNV backend execution after raw-count gates pass.")

@@ -151,7 +151,29 @@ def test_rnaseq_de_backend_skip_outputs_are_declared(tmp_path: Path) -> None:
     backend_manifest = json.loads(Path(tables["manifest"]).read_text(encoding="utf-8"))
     assert backend_manifest["backend_id"] == "rnaseq.de.deseq2_edger"
     assert backend_manifest["status"] == "skipped"
+    # A configured-but-absent Rscript is reported precisely rather than as a
+    # generic missing dependency; both remain explicit skip evidence.
+    reason = backend_manifest["skip_reason"]
+    assert reason.startswith("invalid_rscript_config:") or reason.startswith("dependency_missing:Rscript")
+    assert "missing_Rscript" in reason
+
+
+def test_rnaseq_de_backend_without_any_rscript_reports_dependency_missing(tmp_path: Path, monkeypatch) -> None:
+    """No configured path and no Rscript anywhere -> dependency_missing:Rscript."""
+    from ultimate import env_router
+
+    monkeypatch.setattr(env_router.shutil, "which", lambda name: None)
+    monkeypatch.delenv(env_router.ENV_RSCRIPT, raising=False)
+    monkeypatch.delenv("ULTIMATE_R_ENV_RNASEQ", raising=False)
+    monkeypatch.setenv(env_router.ENV_ENV_ROOT if hasattr(env_router, "ENV_ENV_ROOT") else "ULTIMATE_ENV_ROOT", str(tmp_path / "no_envs"))
+
+    config_path = _write_config(tmp_path)
+    manifest = run_pipeline_from_config(config_path)
+    module = manifest["modules"][0]
+    backend_manifest = json.loads(Path(module["artifacts"]["tables"]["manifest"]).read_text(encoding="utf-8"))
+    assert backend_manifest["status"] == "skipped"
     assert backend_manifest["skip_reason"].startswith("dependency_missing:Rscript")
+    assert module["delivery_allowed"] is False
 
 
 def test_rnaseq_de_backend_ready_path_with_fake_rscript_keeps_mvp_contract(tmp_path: Path) -> None:
@@ -172,7 +194,7 @@ def test_rnaseq_de_backend_ready_path_with_fake_rscript_keeps_mvp_contract(tmp_p
         assert Path(tables[key]).exists(), key
     for key in ("pca", "sample_correlation_heatmap", "volcano", "top_gene_heatmap", "de_backend_volcano", "de_backend_top_gene_heatmap"):
         assert Path(figures[key]).exists(), key
-    assert Path(objects["mvp_object"]).name == "rnaseq_mvp_object.rds"
+    assert Path(objects["mvp_object"]).name == "rnaseq_mvp_object.json"
     assert Path(objects["rnaseq_de_backend_rds"]).exists()
 
     status_text = Path(tables["de_backend_status"]).read_text(encoding="utf-8")

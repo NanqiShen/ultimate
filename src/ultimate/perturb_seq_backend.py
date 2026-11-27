@@ -432,7 +432,7 @@ def _write_perturb_figures(*, tables_dir: Path, figures_dir: Path) -> dict[str, 
 
 
 def _write_perturb_object(*, objects_dir: Path, cells: pd.DataFrame, input_path: str, n_features: int, read_summary: dict[str, Any]) -> dict[str, str]:
-    path = objects_dir / "perturb_seq_mvp_object.rds"
+    path = objects_dir / "perturb_seq_mvp_object.json"
     payload = {
         "object_type": "json_serialized_perturb_seq_mvp",
         "input_path": input_path,
@@ -463,7 +463,7 @@ def _write_skip_outputs(*, tables_dir: Path, figures_dir: Path, objects_dir: Pat
         plt.axis("off")
         save_figure(path, style=apply_clinical_journal_style())
         artifacts["figures"][figure_name] = str(path)
-    object_path = objects_dir / "perturb_seq_mvp_object.rds"
+    object_path = objects_dir / "perturb_seq_mvp_object.json"
     object_path.write_text(json.dumps(base, indent=2, ensure_ascii=False), encoding="utf-8")
     artifacts["objects"]["mvp_object"] = str(object_path)
     return artifacts

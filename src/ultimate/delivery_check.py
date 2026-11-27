@@ -21,6 +21,8 @@ CUSTOMER_PACKAGE_FILES = (
 )
 CUSTOMER_FORBIDDEN_TOKENS = (
     "/shared",
+    "/dshare",
+    "/dhome",
     "/Users",
     "raw_links",
     "production_approval",
@@ -28,6 +30,7 @@ CUSTOMER_FORBIDDEN_TOKENS = (
     "SLURM_JOB_ID",
     "slurm_job_id",
     ".conda",
+    ".venv",
     "/jobs/",
 )
 CUSTOMER_FORBIDDEN_RAW_PATH_HINTS = (

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -31,7 +32,7 @@ DEFAULT_ARRMDATA_URL = "https://bioconductor.org/packages/release/data/experimen
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate methylation MVP on public ARRmData beta matrix.")
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--public-data-dir", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/methylation_arrmdata"))
+    parser.add_argument("--public-data-dir", type=Path, default=Path(str(project_root() / 'public_data/methylation_arrmdata')))
     parser.add_argument("--arrmdata-url", default=DEFAULT_ARRMDATA_URL)
     parser.add_argument("--max-features", type=int, default=12000)
     args = parser.parse_args()
@@ -188,7 +189,7 @@ def _write_project_config(*, output_dir: Path, prepared: dict[str, Any]) -> Path
             "name": "slurm_methylation_arrmdata_public",
             "organism": "human",
             "output_dir": str(output_dir),
-            "server_root": "/shared/shen/2026/ultimate",
+            "server_root": str(project_root()),
             "run_mode": "validation",
             "job_id": "slurm_methylation_arrmdata_public",
             "is_demo": False,

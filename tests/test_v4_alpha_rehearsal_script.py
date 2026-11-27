@@ -10,7 +10,7 @@ def test_v4_alpha_customer_delivery_rehearsal_script_presence_and_scope() -> Non
     text = _script_text()
 
     assert "set -euo pipefail" in text
-    assert "/shared/shen/2026/ultimate" in text
+    assert 'PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"' in text
     assert "/share/home" not in text
     assert 'job_id="v4_alpha_${module}_${preset}_customer_delivery_rehearsal_${STAMP}"' in text
     assert "v4_alpha_scrna_standard_customer_delivery_rehearsal" in text
@@ -31,7 +31,7 @@ def test_v4_alpha_customer_delivery_rehearsal_runs_delivery_check_and_report() -
 
     assert "production_approval.json" in text
     assert "delivery-check --run-dir" in text
-    assert "/shared/shen/2026/ultimate/reports/v4_alpha_customer_delivery_report.md" in text
+    assert "$PROJECT_ROOT/reports/v4_alpha_customer_delivery_report.md" in text
     assert "validation-index" in text
     assert "audit-production" in text
     assert "audit-backends" in text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -39,10 +40,10 @@ def test_prepare_job_creates_shared_layout_and_command_plan(tmp_path: Path) -> N
     assert manifest["slurm_adapter"]["status"] == "missing"
     assert manifest["slurm_adapter"]["path"] == str(root / "slurm" / "ultimate_run.sbatch")
     command_plan = (job_dir / "config" / "command_plan.md").read_text(encoding="utf-8")
-    assert "hpc-sbatch" in command_plan
-    assert f"hpc-sbatch {job_dir / 'config' / 'run_ultimate.sbatch'}" in command_plan
+    assert "sbatch" in command_plan
+    assert f"sbatch {job_dir / 'config' / 'run_ultimate.sbatch'}" in command_plan
+    assert "ULTIMATE_SLURM_ACCOUNT" in command_plan
     assert "ultimate_run.sbatch" in command_plan
-    assert "只接收一个远端脚本路径" in command_plan
     assert "未检测到 Slurm wrapper" in command_plan
     assert "production_approval.json" in command_plan
     assert "approved" in command_plan
@@ -54,7 +55,8 @@ def test_prepare_job_creates_shared_layout_and_command_plan(tmp_path: Path) -> N
     assert "production approval JSON is not approved=true" in submit_script
     assert "production approval input_path mismatch" in submit_script
     assert "production approval output_dir mismatch" in submit_script
-    assert "hpc-sbatch" in submit_script
+    assert "ULTIMATE_SBATCH" in submit_script
+    assert "ULTIMATE_SLURM_ACCOUNT" in submit_script
     assert str(job_dir / "config" / "run_ultimate.sbatch") in submit_script
     assert "ultimate_run.sbatch" not in submit_script
     job_slurm = (job_dir / "config" / "run_ultimate.sbatch").read_text(encoding="utf-8")
@@ -74,6 +76,55 @@ def test_prepare_job_creates_shared_layout_and_command_plan(tmp_path: Path) -> N
     assert approval["approved"] is False
     assert approval["input_path"] == str((job_dir / "config" / "project.yaml").resolve())
     assert approval["output_dir"] == str((job_dir / "runs" / "ORDER_001").resolve())
+
+
+def test_prepare_job_generated_scripts_do_not_evaluate_shell_metacharacters(tmp_path: Path) -> None:
+    source = init_project("rnaseq", tmp_path / "source_shell_quote", demo_data=True)
+
+    submit_marker = tmp_path / "submit_marker_created"
+    submit_root = tmp_path / f"root $(touch {submit_marker}) with spaces"
+    submit_manifest = prepare_job(
+        config_path=Path(source["config_path"]),
+        job_id="SHELL SUBMIT",
+        root=submit_root,
+        run_mode="interactive",
+    )
+    submit_script = Path(submit_manifest["submit_script"])
+    submit_env = os.environ.copy()
+    submit_env["ULTIMATE_SBATCH"] = "/bin/echo"
+
+    submit_result = subprocess.run(
+        [str(submit_script)],
+        cwd=submit_script.parent,
+        text=True,
+        capture_output=True,
+        env=submit_env,
+        check=False,
+    )
+
+    assert submit_result.returncode == 0, submit_result.stderr + submit_result.stdout
+    assert not submit_marker.exists()
+    assert str(Path(submit_manifest["job_slurm_script"])) in submit_result.stdout
+
+    slurm_marker = tmp_path / "slurm_marker_created"
+    slurm_root = tmp_path / f"root $(touch {slurm_marker}) with spaces"
+    slurm_manifest = prepare_job(
+        config_path=Path(source["config_path"]),
+        job_id="SHELL SLURM",
+        root=slurm_root,
+        run_mode="interactive",
+    )
+    wrapper = slurm_root / "slurm" / "ultimate_run.sbatch"
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_text("#!/usr/bin/env bash\necho wrapper-ok \"$@\"\n", encoding="utf-8")
+    wrapper.chmod(0o775)
+    job_slurm = Path(slurm_manifest["job_slurm_script"])
+
+    slurm_result = subprocess.run([str(job_slurm)], cwd=job_slurm.parent, text=True, capture_output=True, check=False)
+
+    assert slurm_result.returncode == 0, slurm_result.stderr + slurm_result.stdout
+    assert not slurm_marker.exists()
+    assert "wrapper-ok" in slurm_result.stdout
 
 
 def test_prepare_job_submit_script_blocks_mismatched_approval_before_sbatch(tmp_path: Path) -> None:

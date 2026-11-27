@@ -10,7 +10,7 @@ def test_v4_beta_customer_trial_script_presence_and_scope() -> None:
     text = _script_text()
 
     assert "set -euo pipefail" in text
-    assert "/shared/shen/2026/ultimate" in text
+    assert 'PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"' in text
     assert "/share/home" not in text
     assert 'job_id="v4_beta_${module}_${preset}_customer_delivery_rehearsal_${STAMP}"' in text
     assert "v4_beta_scrna_standard_customer_delivery_rehearsal" in text

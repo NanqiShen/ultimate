@@ -10,10 +10,10 @@ Space Ranger 是授权/用户自带工具，Ultimate 只做路径检测、命令
 set -euo pipefail
 
 SPACERANGER=/path/to/spaceranger
-TRANSCRIPTOME=/shared/shen/2026/ultimate/references/10x/refdata-gex-GRCh38-2024-A
-FASTQS=/shared/shen/2026/ultimate/jobs/<job_id>/raw_links/fastqs
-IMAGE=/shared/shen/2026/ultimate/jobs/<job_id>/raw_links/tissue_image.tif
-OUT_ROOT=/shared/shen/2026/ultimate/jobs/<job_id>/runs/spaceranger
+TRANSCRIPTOME=${ULTIMATE_ROOT}/references/10x/refdata-gex-GRCh38-2024-A
+FASTQS=${ULTIMATE_ROOT}/jobs/<job_id>/raw_links/fastqs
+IMAGE=${ULTIMATE_ROOT}/jobs/<job_id>/raw_links/tissue_image.tif
+OUT_ROOT=${ULTIMATE_ROOT}/jobs/<job_id>/runs/spaceranger
 
 mkdir -p "$OUT_ROOT"
 cd "$OUT_ROOT"

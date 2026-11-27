@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import csv
@@ -13,8 +14,8 @@ from check_validation_manifests import iter_validation_manifests
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create transparent methods.md files for validation runs that lack them.")
-    parser.add_argument("--root", type=Path, default=Path("/shared/shen/2026/ultimate"))
-    parser.add_argument("--validations-dir", type=Path, default=Path("/shared/shen/2026/ultimate/validations"))
+    parser.add_argument("--root", type=Path, default=Path(str(project_root())))
+    parser.add_argument("--validations-dir", type=Path, default=Path(str(project_root() / 'validations')))
     parser.add_argument("--output-tsv", type=Path, required=True)
     args = parser.parse_args()
     rows = ensure_validation_methods(root=args.root, validations_dir=args.validations_dir)

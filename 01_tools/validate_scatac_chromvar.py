@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -16,8 +17,7 @@ from ultimate.pipeline import run_pipeline_from_config
 
 
 DEFAULT_H5 = Path(
-    "/shared/shen/2026/ultimate/public_data/scatac/"
-    "10k_pbmc_ATACv2_nextgem_Chromium_Controller_filtered_peak_bc_matrix.h5"
+    str(project_root() / 'public_data/scatac/10k_pbmc_ATACv2_nextgem_Chromium_Controller_filtered_peak_bc_matrix.h5')
 )
 
 

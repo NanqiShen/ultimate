@@ -15,13 +15,13 @@
 ```bash
 set -euo pipefail
 
-export NXF_HOME=/shared/shen/2026/ultimate/.nextflow
-export NXF_WORK=/shared/shen/2026/ultimate/jobs/<job_id>/work/nfcore_airrflow
+export NXF_HOME=${ULTIMATE_ROOT}/.nextflow
+export NXF_WORK=${ULTIMATE_ROOT}/jobs/<job_id>/work/nfcore_airrflow
 
 nextflow run nf-core/airrflow \
   -profile apptainer,slurm \
-  -c /shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_airrflow_nextflow.config \
-  -params-file /shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_airrflow_params.yaml \
+  -c ${ULTIMATE_ROOT}/jobs/<job_id>/config/nfcore_airrflow_nextflow.config \
+  -params-file ${ULTIMATE_ROOT}/jobs/<job_id>/config/nfcore_airrflow_params.yaml \
   -work-dir "$NXF_WORK" \
   -resume
 ```

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -19,7 +20,7 @@ import scanpy as sc
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate a public 10x CITE-seq feature-barcode matrix.")
-    parser.add_argument("--input-h5", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/cite_seq/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5"))
+    parser.add_argument("--input-h5", type=Path, default=Path(str(project_root() / 'public_data/cite_seq/pbmc_10k_protein_v3_filtered_feature_bc_matrix.h5')))
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--max-cells-object", type=int, default=3000)
     args = parser.parse_args()

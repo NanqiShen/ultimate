@@ -3,12 +3,15 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from ultimate.paths import environment_root, external_root
 
 
 @dataclass(frozen=True)
@@ -31,9 +34,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞转录组 scRNA-seq",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            "/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311",
-            "/share/home/nshen/miniconda3/envs/nsclc_sc",
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
+            str(Path.home() / "miniconda3/envs/nsclc_sc"),
         ),
         python_packages=("scanpy", "anndata", "scvi", "celltypist", "decoupler"),
         r_packages=("Seurat", "SingleR", "GSVA", "AUCell", "WGCNA", "clusterProfiler"),
@@ -44,9 +47,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞 ATAC-seq",
         "ultimate-scatac-multiome",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scatac-py",
-            "{root}/.conda/envs/ultimate-scatac-r",
-            "{root}/.conda/envs/ultimate-genome-mtdna",
+            "{env}/ultimate-scatac-py",
+            "{env}/ultimate-scatac-r",
+            "{env}/ultimate-genome-mtdna",
         ),
         python_packages=("snapatac2",),
         r_packages=("Signac", "Seurat", "chromVAR", "GenomicRanges"),
@@ -59,10 +62,10 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞多组学 Multiome",
         "ultimate-scatac-multiome",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scatac-py",
-            "{root}/.conda/envs/ultimate-scatac-r",
-            "/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311",
-            "{root}/.conda/envs/ultimate-genome-mtdna",
+            "{env}/ultimate-scatac-py",
+            "{env}/ultimate-scatac-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
+            "{env}/ultimate-genome-mtdna",
         ),
         python_packages=("muon", "snapatac2"),
         r_packages=("Signac", "Seurat", "chromVAR"),
@@ -74,7 +77,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "vdj",
         "单细胞免疫组库 VDJ/TCR/BCR",
         "ultimate-vdj",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-vdj-r",),
+        alternate_env_paths=("{env}/ultimate-vdj-r",),
         python_packages=("scirpy", "dandelion"),
         r_packages=("scRepertoire", "immunarch"),
         data_checks=("public_vdj",),
@@ -84,9 +87,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞 DNA-seq / 基因组",
         "ultimate-genome-mtdna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-core",
-            "/share/home/nshen/miniconda3/envs/star_env",
-            "/share/home/nshen/miniconda3/envs/scfusion_final",
+            "{env}/ultimate-core",
+            str(Path.home() / "miniconda3/envs/star_env"),
+            str(Path.home() / "miniconda3/envs/scfusion_final"),
         ),
         python_packages=("pandas", "matplotlib"),
         commands=("samtools", "bcftools", "bwa", "bedtools"),
@@ -97,9 +100,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞线粒体基因组 / mtDNA",
         "ultimate-genome-mtdna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-core",
-            "/share/home/nshen/miniconda3/envs/star_env",
-            "/share/home/nshen/miniconda3/envs/scfusion_final",
+            "{env}/ultimate-core",
+            str(Path.home() / "miniconda3/envs/star_env"),
+            str(Path.home() / "miniconda3/envs/scfusion_final"),
         ),
         python_packages=("pandas", "matplotlib"),
         commands=("samtools", "bcftools", "cellsnp-lite", "vireo"),
@@ -110,9 +113,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞表观遗传组",
         "ultimate-scatac-multiome",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scatac-py",
-            "{root}/.conda/envs/ultimate-scatac-r",
-            "{root}/.conda/envs/ultimate-genome-mtdna",
+            "{env}/ultimate-scatac-py",
+            "{env}/ultimate-scatac-r",
+            "{env}/ultimate-genome-mtdna",
         ),
         python_packages=("snapatac2",),
         r_packages=("Signac", "chromVAR", "minfi", "GenomicRanges"),
@@ -124,8 +127,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "CITE-seq / ADT 标签分析",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            "/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311",
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("muon", "scanpy"),
         r_packages=("Seurat", "dsb"),
@@ -136,9 +139,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞空间组学 / 空间转录组",
         "ultimate-spatial",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-spatial-py",
-            "{root}/.conda/envs/ultimate-spatial-r",
-            "/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311",
+            "{env}/ultimate-spatial-py",
+            "{env}/ultimate-spatial-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("squidpy", "spatialdata", "scanpy"),
         r_packages=("SpatialExperiment", "TENxVisiumData", "Seurat"),
@@ -149,7 +152,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "perturb_seq",
         "Perturb-seq / CRISPR 筛选",
         "ultimate-scrna",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("scanpy", "decoupler"),
         r_packages=("Seurat", "limma", "clusterProfiler"),
         data_checks=("nsclc_h5ad",),
@@ -158,7 +161,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "hto_demux",
         "HTO / Cell Hashing 拆样",
         "ultimate-scrna",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("scanpy",),
         r_packages=("Seurat", "DropletUtils"),
         data_checks=("public_cite_seq",),
@@ -167,7 +170,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "genotype_demux",
         "Genotype demultiplex 拆样",
         "ultimate-genome-mtdna",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-core",),
+        alternate_env_paths=("{env}/ultimate-core",),
         python_packages=("pandas",),
         command_groups=(
             ("cellsnp-lite", "vireo"),
@@ -181,8 +184,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "单细胞代谢 / 功能状态",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            "/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311",
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("scanpy", "decoupler"),
         r_packages=("GSVA", "AUCell", "Seurat"),
@@ -193,8 +196,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "肿瘤单细胞常见专项",
         "ultimate-scrna",
         alternate_env_paths=(
-            "{root}/.conda/envs/ultimate-scrna-r",
-            "/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311",
+            "{env}/ultimate-scrna-r",
+            "{external}/singlecell_workbench/.conda/envs/scw-py311",
         ),
         python_packages=("scanpy", "celltypist", "decoupler"),
         r_packages=("infercnv", "copykat", "Seurat", "survival"),
@@ -204,7 +207,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "clinical_assoc",
         "跨样本 / 临床关联分析",
         "ultimate-core",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("pandas", "numpy", "matplotlib"),
         r_packages=("survival", "GSVA", "survminer"),
         data_checks=("public_geo_validation",),
@@ -213,7 +216,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "method_tools",
         "方法学 / 工具类分析",
         "ultimate-core",
-        alternate_env_paths=("{root}/.conda/envs/ultimate-scrna-r",),
+        alternate_env_paths=("{env}/ultimate-scrna-r",),
         python_packages=("pandas", "numpy", "matplotlib", "jinja2"),
         r_packages=("Seurat", "SingleR"),
         commands=("snakemake",),
@@ -279,10 +282,11 @@ def _check_capability(root: Path, capability: Capability) -> dict[str, Any]:
 
 
 def _env_paths(root: Path, capability: Capability) -> list[Path]:
-    primary = root / ".conda" / "envs" / capability.env_name
-    env_paths = [primary]
+    env_root = environment_root(root)
+    substitutions = {"root": root, "env": env_root, "external": external_root()}
+    env_paths = [env_root / capability.env_name]
     for env_path in capability.alternate_env_paths:
-        env_paths.append(Path(env_path.format(root=root)))
+        env_paths.append(Path(env_path.format(**substitutions)))
     return env_paths
 
 
@@ -336,11 +340,18 @@ def _command_available(command: str, bin_dirs: list[Path]) -> bool:
     return any((bin_dir / command).exists() for bin_dir in bin_dirs) or shutil.which(command) is not None
 
 
+EXTERNAL_DATA_CHECK_ENV = {
+    "nsclc_h5ad": "ULTIMATE_SINGLECELL_NSCLC_H5AD",
+    "dna_bam_0518": "ULTIMATE_SINGLECELL_DNA_BAM_0518",
+    "mtdna_0518": "ULTIMATE_SINGLECELL_MTDNA_VARIANTS_0518",
+}
+
+
 def _check_data(root: Path, checks: tuple[str, ...]) -> dict[str, bool]:
     paths = {
-        "nsclc_h5ad": Path("/shared/shen/2026/nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad"),
-        "dna_bam_0518": Path("/shared/shen/2026/0518/analysis_dna/bam/A_121/A_121.sorted.bam"),
-        "mtdna_0518": Path("/shared/shen/2026/0518/analysis_mtDNA/singlecell_mgatk_like/variants/high_confidence_informative_variants.tsv"),
+        "nsclc_h5ad": Path(str(external_root() / 'nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad')),
+        "dna_bam_0518": Path(str(external_root() / '0518/analysis_dna/bam/A_121/A_121.sorted.bam')),
+        "mtdna_0518": Path(str(external_root() / '0518/analysis_mtDNA/singlecell_mgatk_like/variants/high_confidence_informative_variants.tsv')),
         "public_geo_validation": root / "projects" / "public_validation_geo" / "runs" / "public_validation_geo" / "run_manifest.json",
         "ultimate_demo": root / "projects" / "core_env_demo" / "runs" / "core_env_demo" / "run_manifest.json",
         "public_scatac": root / "public_data" / "scatac" / "manifest.json",
@@ -349,6 +360,12 @@ def _check_data(root: Path, checks: tuple[str, ...]) -> dict[str, bool]:
         "public_spatial": root / "public_data" / "spatial" / "manifest.json",
         "public_cite_seq": root / "public_data" / "cite_seq" / "manifest.json",
     }
+    # External datasets differ per site; allow an explicit override instead of
+    # rewriting the default layout for every deployment.
+    for check, env_var in EXTERNAL_DATA_CHECK_ENV.items():
+        value = os.environ.get(env_var)
+        if value:
+            paths[check] = Path(os.path.expandvars(value)).expanduser()
     return {check: _data_check_passed(paths.get(check, root / check)) for check in checks}
 
 

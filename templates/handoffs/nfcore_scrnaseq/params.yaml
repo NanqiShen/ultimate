@@ -1,5 +1,5 @@
-input: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_scrnaseq_samplesheet.csv"
-outdir: "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_scrnaseq"
+input: "jobs/<job_id>/config/nfcore_scrnaseq_samplesheet.csv"
+outdir: "jobs/<job_id>/runs/nfcore_scrnaseq"
 genome: "GRCh38"
 aligner: "star"
 protocol: "10XV3"

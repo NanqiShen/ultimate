@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ult_bulk_envs
-#SBATCH --output=/shared/shen/2026/ultimate/logs/%x_%j.out
-#SBATCH --error=/shared/shen/2026/ultimate/logs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=24:00:00
 
 set -euo pipefail
 
-PROJECT_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
-CONDA_SH="${CONDA_SH:-/share/home/nshen/miniconda3/etc/profile.d/conda.sh}"
+PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" || ! -d "$PROJECT_ROOT/src/ultimate" ]]; then
+  echo "Set ULTIMATE_ROOT to the Ultimate checkout, or submit from its root." >&2
+  exit 2
+fi
+export ULTIMATE_ROOT="$PROJECT_ROOT"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 MAMBA_EXE="${MAMBA_EXE:-mamba}"
 CONDARC_PATH="${ULTIMATE_CONDARC:-$PROJECT_ROOT/config/condarc.mirrors.tuna.yml}"
 ENV_KEYS=("$@")

@@ -1,0 +1,104 @@
+name: CI
+
+# Regression gate for Ultimate.
+#
+# Two rules matter here and are enforced by `scripts/check_pytest_summary.py`:
+#   1. pytest output is parsed and the summary line is asserted (0 failed, 0 error,
+#      a positive passed count). A shell exit code of 0 is NOT accepted as proof,
+#      because a pytest usage error used to be swallowed as success.
+#   2. Hardcoded site paths (PKU /share/home, /shared/shen, hpc-sbatch) must stay
+#      at zero hits in shippable code.
+
+on:
+  push:
+    branches: ["main", "feature/**", "portability/**", "migration/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" || python -m pip install -e .
+          python -m pip install pytest pyyaml
+      - name: Run pytest and assert the summary line
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p ci-artifacts
+          PYTHONPATH=src python -m pytest -q --tb=short -p no:cacheprovider 2>&1 | tee ci-artifacts/pytest.log
+          python scripts/check_pytest_summary.py ci-artifacts/pytest.log
+
+  packaged-smoke:
+    name: wheel install smoke (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: pytest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist
+      - name: Install into a clean virtualenv and smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/smoke-venv"
+          # Deliberately no PYTHONPATH: the wheel must be self-contained.
+          "$RUNNER_TEMP/smoke-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/smoke-venv/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/smoke-venv/bin/ultimate" doctor --module rnaseq
+          "$RUNNER_TEMP/smoke-venv/bin/ultimate" doctor --module scrna
+          "$RUNNER_TEMP/smoke-venv/bin/ultimate" handoff-check --root "$RUNNER_TEMP/hc" --output-dir "$RUNNER_TEMP/hc/audit"
+      - name: Verify packaged runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHARE="$("$RUNNER_TEMP/smoke-venv/bin/python" -c 'import sys; print(sys.prefix)')/share/ultimate"
+          test -f "$SHARE/scripts/R/rnaseq_de_backend.R"
+          test -f "$SHARE/config/default.yaml"
+          test -f "$SHARE/slurm/ultimate_run.sbatch"
+          ls "$SHARE/scripts/R" | wc -l
+
+  hardcoded-path-scan:
+    name: hardcoded path scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on PKU-specific paths or legacy wrappers
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Negative-detection vocabulary (FORBIDDEN_TEMPLATE_TOKENS and the CI
+          # scanner itself) legitimately contains these literals; excluding them
+          # keeps the scan meaningful instead of permanently red.
+          matches=$(grep -rnE "/share/home|/shared/shen|hpc-sbatch|hpc-run|queue = 'comp'|queue = 'cpu'" \
+            src/ scripts/ slurm/ templates/handoffs/ config/ 2>/dev/null \
+            | grep -v "src/ultimate/handoff_check.py" \
+            | grep -v "src/ultimate_bioinfo.egg-info" \
+            | grep -v "\.pyc" || true)
+          if [[ -n "$matches" ]]; then
+            echo "::error::Hardcoded site paths or legacy wrappers found:"
+            echo "$matches"
+            exit 1
+          fi
+          echo "hardcoded path scan: 0 hits"

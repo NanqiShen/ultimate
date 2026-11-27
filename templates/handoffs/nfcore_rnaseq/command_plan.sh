@@ -2,7 +2,7 @@
 set -euo pipefail
 
 JOB_ID="${1:?usage: command_plan.sh <job_id>}"
-ULTIMATE_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
+ULTIMATE_ROOT="${ULTIMATE_ROOT:?set ULTIMATE_ROOT to the project root}"
 JOB_ROOT="${ULTIMATE_ROOT}/jobs/${JOB_ID}"
 CONFIG_DIR="${JOB_ROOT}/config"
 RUN_DIR="${JOB_ROOT}/runs/nfcore_rnaseq"

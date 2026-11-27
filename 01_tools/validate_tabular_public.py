@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -32,7 +33,7 @@ def main() -> None:
         description="Validate tabular/bulk-derived MVP modules on the public airway count matrix."
     )
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--public-data-dir", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/rnaseq_airway"))
+    parser.add_argument("--public-data-dir", type=Path, default=Path(str(project_root() / 'public_data/rnaseq_airway')))
     parser.add_argument("--input-matrix", type=Path, default=None)
     parser.add_argument("--samplesheet", type=Path, default=None)
     parser.add_argument("--matrix-url", default=DEFAULT_MATRIX_URL)
@@ -269,7 +270,7 @@ def _write_project_config(*, output_dir: Path, prepared: dict[str, Any], modules
             "name": "slurm_tabular_airway_public",
             "organism": "human",
             "output_dir": str(output_dir),
-            "server_root": "/shared/shen/2026/ultimate",
+            "server_root": str(project_root()),
             "run_mode": "validation",
             "job_id": "slurm_tabular_airway_public",
             "is_demo": False,

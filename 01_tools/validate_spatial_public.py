@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -20,7 +21,7 @@ import pandas as pd
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate Squidpy public Visium H&E spatial transcriptomics data.")
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--public-data-dir", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/spatial"))
+    parser.add_argument("--public-data-dir", type=Path, default=Path(str(project_root() / 'public_data/spatial')))
     parser.add_argument("--max-spots-object", type=int, default=3000)
     args = parser.parse_args()
     manifest = run_validation(args.output_dir, args.public_data_dir, args.max_spots_object)

@@ -7,7 +7,7 @@ project:
   controlled_rehearsal: true
 
 batch:
-  root: /shared/shen/2026/ultimate
+  root: ..
   job_prefix: v4_4
   slurm_suite: slurm/v4_4_large_scale_standard_rehearsal.sbatch
   storage_budget_gb: 500

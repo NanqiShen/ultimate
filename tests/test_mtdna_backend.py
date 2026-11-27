@@ -110,7 +110,7 @@ def test_mtdna_backend_generates_lineage_ready_outputs(tmp_path: Path) -> None:
     assert Path(module["artifacts"]["figures"]["depth_distribution"]).exists()
     assert Path(module["artifacts"]["figures"]["vaf_heatmap"]).exists()
     assert Path(module["artifacts"]["figures"]["shared_variant_heatmap"]).exists()
-    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "mtdna_mvp_object.rds"
+    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "mtdna_mvp_object.json"
 
     lineage = pd.read_csv(run_dir / "results" / "tables" / "mtdna" / "lineage_input.tsv", sep="\t")
     assert "lineage_ready_variant" in set(lineage["lineage_handoff_status"])

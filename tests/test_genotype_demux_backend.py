@@ -114,7 +114,7 @@ def test_genotype_demux_backend_generates_cellsnp_outputs(tmp_path: Path) -> Non
         assert path.exists() and path.stat().st_size > 0, key
     assert Path(module["artifacts"]["figures"]["sample_assignment_barplot"]).exists()
     assert Path(module["artifacts"]["figures"]["confidence_distribution"]).exists()
-    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "genotype_demux_mvp_object.rds"
+    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "genotype_demux_mvp_object.json"
 
     assignment = pd.read_csv(run_dir / "results" / "tables" / "genotype_demux" / "assignment.tsv", sep="\t")
     assert {"low_alt_fraction", "mid_alt_fraction", "high_alt_fraction"}.intersection(set(assignment["assigned_genotype"]))

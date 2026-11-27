@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -91,7 +92,7 @@ def build_report(root: Path, output_dir: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Write Ultimate V3.5 intake readiness report.")
-    parser.add_argument("--root", type=Path, default=Path("/shared/shen/2026/ultimate"))
+    parser.add_argument("--root", type=Path, default=Path(str(project_root())))
     parser.add_argument("--output-dir", type=Path, default=None)
     args = parser.parse_args()
     output_dir = args.output_dir or args.root / "reports"

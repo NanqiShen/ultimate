@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import external_root_0518
 
 import argparse
 import json
@@ -18,7 +19,7 @@ import pandas as pd
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate 0518 DNA/mtDNA outputs inside Ultimate.")
-    parser.add_argument("--source-root", type=Path, default=Path("/shared/shen/2026/0518"))
+    parser.add_argument("--source-root", type=Path, default=Path(str(external_root_0518())))
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
     manifest = run_validation(args.source_root, args.output_dir)

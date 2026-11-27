@@ -111,7 +111,7 @@ def test_hto_demux_backend_generates_assignment_outputs(tmp_path: Path) -> None:
         assert path.exists() and path.stat().st_size > 0, key
     assert Path(module["artifacts"]["figures"]["hto_density"]).exists()
     assert Path(module["artifacts"]["figures"]["hto_heatmap"]).exists()
-    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "hto_demux_mvp_object.rds"
+    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "hto_demux_mvp_object.json"
 
     assignments = pd.read_csv(run_dir / "results" / "tables" / "hto_demux" / "hto_assignment.tsv", sep="\t")
     assert {"singlet", "doublet", "negative"}.issubset(set(assignments["assignment_class"]))

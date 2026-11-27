@@ -1,5 +1,5 @@
-input: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_sopa_samplesheet.csv"
-outdir: "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_sopa"
+input: "jobs/<job_id>/config/nfcore_sopa_samplesheet.csv"
+outdir: "jobs/<job_id>/runs/nfcore_sopa"
 technology: "xenium"
 max_cpus: 16
 max_memory: "96.GB"

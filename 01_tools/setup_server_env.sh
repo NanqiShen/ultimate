@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="${ULTIMATE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 ENV_FILE="$PROJECT_ROOT/envs/environment.core.yml"
 ENV_PREFIX="${1:-$PROJECT_ROOT/.conda/envs/ultimate-core}"
 
@@ -10,12 +11,12 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-if [[ ! -f /share/home/nshen/miniconda3/etc/profile.d/conda.sh ]]; then
-  echo "Could not find conda activation script under /share/home/nshen/miniconda3" >&2
+if [[ ! -f "$CONDA_SH" ]]; then
+  echo "Set CONDA_SH to conda activation script; not found: $CONDA_SH" >&2
   exit 1
 fi
 
-source /share/home/nshen/miniconda3/etc/profile.d/conda.sh
+source "$CONDA_SH"
 
 if command -v mamba >/dev/null 2>&1; then
   CONDA_FRONTEND="mamba"

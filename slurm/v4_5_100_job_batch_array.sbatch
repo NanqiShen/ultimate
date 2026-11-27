@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ult_v4_5_100
-#SBATCH --output=/shared/shen/2026/ultimate/logs/%x_%A_%a.out
-#SBATCH --error=/shared/shen/2026/ultimate/logs/%x_%A_%a.err
+#SBATCH --output=%x_%A_%a.out
+#SBATCH --error=%x_%A_%a.err
 #SBATCH --array=0-9
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
@@ -9,8 +9,35 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
-CORE_ENV="${ULTIMATE_CORE_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-core}"
+PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" || ! -d "$PROJECT_ROOT/src/ultimate" ]]; then
+  echo "Set ULTIMATE_ROOT to the Ultimate checkout, or submit from its root." >&2
+  exit 2
+fi
+export ULTIMATE_ROOT="$PROJECT_ROOT"
+# Runtime artefacts live beside the code root on shared deployments; fall back to
+# an in-checkout environment only when no runtime environment exists.
+RUNTIME_ROOT="${ULTIMATE_RUNTIME_ROOT:-$(dirname -- "$PROJECT_ROOT")/ultimate_runtime}"
+export ULTIMATE_RUNTIME_ROOT="$RUNTIME_ROOT"
+if [[ -n "${ULTIMATE_CORE_ENV:-}" ]]; then
+  CORE_ENV="$ULTIMATE_CORE_ENV"
+else
+  CORE_ENV=""
+  for candidate in \
+    "$RUNTIME_ROOT/envs/ultimate-core" \
+    "$PROJECT_ROOT/.venv" \
+    "$PROJECT_ROOT/.conda/envs/ultimate-core"
+  do
+    if [[ -x "$candidate/bin/python" ]]; then
+      CORE_ENV="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$CORE_ENV" ]]; then
+    echo "No Ultimate core environment found. Build it with: sbatch slurm/xielab_setup_runtime_envs.sbatch" >&2
+    exit 2
+  fi
+fi
 SCRNA_ENV="${ULTIMATE_SCRNA_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-scrna}"
 STAMP="${ULTIMATE_V45_100_JOB_STAMP:-${SLURM_ARRAY_JOB_ID:-$(date -u +%Y%m%dT%H%M%SZ)}}"
 CHUNK_INDEX="${SLURM_ARRAY_TASK_ID:?Submit as a Slurm array with --array=0-9}"

@@ -135,7 +135,7 @@ def test_scdna_backend_generates_matrix_ready_outputs(tmp_path: Path) -> None:
     assert Path(module["artifacts"]["figures"]["coverage_distribution"]).exists()
     assert Path(module["artifacts"]["figures"]["vaf_heatmap"]).exists()
     assert Path(module["artifacts"]["figures"]["clone_summary"]).exists()
-    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "scdna_mvp_object.rds"
+    assert Path(module["artifacts"]["objects"]["mvp_object"]).name == "scdna_mvp_object.json"
 
     variant_qc = pd.read_csv(run_dir / "results" / "tables" / "scdna" / "variant_qc.tsv", sep="\t")
     assert "variant_calling_not_run" in variant_qc["filter_status"].iloc[0]

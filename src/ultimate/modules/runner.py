@@ -17,7 +17,8 @@ import seaborn as sns
 from ultimate.analysis_levels import classify_analysis_level, require_real_evidence
 from ultimate.backend_registry import build_backend_plan, enrich_backend_plan_for_run, write_backend_plan_table
 from ultimate.constants import MODULE_SPECS
-from ultimate.bulk import is_bulk_module, run_bulk_module
+from ultimate.bulk import is_bulk_module, require_real_inputs_for_production, run_bulk_module
+from ultimate.survival_backend import run_survival_analysis
 from ultimate.cite_seq_backend import has_cite_seq_backend_config, run_cite_seq_backend
 from ultimate.genotype_demux_backend import has_genotype_demux_backend_config, run_genotype_demux_backend
 from ultimate.hto_demux_backend import has_hto_demux_backend_config, run_hto_demux_backend
@@ -98,6 +99,8 @@ def run_module(
 
     module_cfg = (config.get("modules") or {}).get(module_name) or {}
     validated_run_dir = _validated_run_dir(module_cfg)
+    if validated_run_dir is None:
+        require_real_inputs_for_production(config, module_name, module_cfg, module_cfg.get("input_matrix"))
     if validated_run_dir is not None:
         return _run_validated_run_backend(
             module_name=module_name,
@@ -260,6 +263,7 @@ def run_scrna_mvp_module_backend(*, config: dict[str, Any], output_dir: Path, sa
         production_approval=config.get("_production_approval") if isinstance(config.get("_production_approval"), dict) else None,
         celltypist_model=Path(str(celltypist_model)) if celltypist_model else None,
         nichenet_resource=Path(str(nichenet_resource)) if nichenet_resource else None,
+        config=config,
     )
     backend_execution_rows = list(manifest.get("backend_status") or []) if isinstance(manifest.get("backend_status"), list) else []
     backend_plan = enrich_backend_plan_for_run(
@@ -340,6 +344,11 @@ def _scrna_input(config: dict[str, Any]) -> tuple[Path | None, str | None]:
     ]
     configured_type = str(module_cfg.get("input_type") or raw_cfg.get("input_type") or "").lower()
     generic = module_cfg.get("input_path") or raw_cfg.get("input_path")
+    samples_list = module_cfg.get("samples") or raw_cfg.get("samples")
+    if not generic and isinstance(samples_list, list) and samples_list:
+        first = samples_list[0]
+        if isinstance(first, dict) and first.get("input_path"):
+            generic = first.get("input_path")
     if generic:
         if configured_type in {"h5ad", "10x_h5", "10x_mtx"}:
             return Path(str(generic)), configured_type
@@ -717,9 +726,20 @@ def _write_figures(
         _plot_correlation(matrix, corr_path, title=f"{module_name} correlation")
         paths["correlation_network_proxy"] = str(corr_path)
     if module_name == "publicdb":
-        survival_path = figures_dir / "kaplan_meier_demo.png"
-        _plot_survival(survival_path)
-        paths["kaplan_meier_demo"] = str(survival_path)
+        # No clinical survival table is available on this MVP path, so record an
+        # explicit skipped figure rather than drawing a fabricated curve.
+        feature = str(stats.iloc[0]["feature_id"]) if len(stats) else str(matrix.index[0])
+        expr = matrix.loc[feature] if feature in matrix.index else matrix.iloc[0]
+        survival = run_survival_analysis(
+            pd.DataFrame(),
+            expr,
+            figures_dir=figures_dir,
+            tables_dir=figures_dir.parent / "tables" / module_name,
+            label=feature,
+            module_name=module_name,
+        )
+        paths["kaplan_meier"] = survival.figure_path
+        paths["kaplan_meier_status"] = survival.status
     return paths
 
 
@@ -794,33 +814,17 @@ def _plot_correlation(matrix: pd.DataFrame, path: Path, title: str) -> None:
     save_figure(path, style=tokens)
 
 
-def _plot_survival(path: Path) -> None:
-    tokens = apply_clinical_journal_style()
-    months = np.arange(0, 61, 6)
-    high = np.exp(-months / 38)
-    low = np.exp(-months / 56)
-    plt.figure(figsize=(6, 4))
-    plt.step(months, high, where="post", label="High expression", color=tokens["case"], linewidth=1.7)
-    plt.step(months, low, where="post", label="Low expression", color=tokens["control"], linewidth=1.7)
-    plt.xlabel("Months")
-    plt.ylabel("Survival probability")
-    plt.title("Kaplan-Meier demo")
-    plt.legend()
-    plt.tight_layout()
-    save_figure(path, style=tokens)
-
-
 def _write_objects(module_name: str, matrix: pd.DataFrame, stats: pd.DataFrame, objects_dir: Path) -> dict[str, str]:
     object_manifest = {
         "module": module_name,
-        "note": "Python smoke object. Formal R backend should write native .rds/.RData files with the same prefix.",
+        "note": "Python smoke object. Formal R backends write native .rds objects separately.",
         "matrix_shape": list(matrix.shape),
         "top_features": stats.head(10)["feature_id"].tolist(),
     }
     json_path = objects_dir / "object_manifest.json"
-    rds_path = objects_dir / f"{module_name}_smoke_object.rds"
-    rdata_path = objects_dir / f"{module_name}_workspace.RData"
+    python_object_path = objects_dir / f"{module_name}_smoke_object.json"
+    workspace_path = objects_dir / f"{module_name}_workspace_summary.json"
     json_path.write_text(json.dumps(object_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    rds_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
-    rdata_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
-    return {"manifest": str(json_path), "rds": str(rds_path), "RData": str(rdata_path)}
+    python_object_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
+    workspace_path.write_text(json.dumps(object_manifest, ensure_ascii=False), encoding="utf-8")
+    return {"manifest": str(json_path), "python_object": str(python_object_path), "workspace_summary": str(workspace_path)}

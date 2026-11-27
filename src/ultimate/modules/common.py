@@ -221,28 +221,28 @@ MODULE_MVP_FIGURES: dict[str, tuple[str, ...]] = {
 }
 
 MODULE_MVP_OBJECTS: dict[str, str] = {
-    "rnaseq": "rnaseq_mvp_object.rds",
+    "rnaseq": "rnaseq_mvp_object.json",
     "scrna": "scrna_mvp.h5ad",
     "scatac": "scatac_mvp.h5ad",
     "multiome": "multiome_mvp.h5mu",
     "vdj": "vdj_mvp.h5ad",
-    "scdna": "scdna_mvp_object.rds",
-    "mtdna": "mtdna_mvp_object.rds",
-    "scepi": "scepi_mvp_object.rds",
+    "scdna": "scdna_mvp_object.json",
+    "mtdna": "mtdna_mvp_object.json",
+    "scepi": "scepi_mvp_object.json",
     "cite_seq": "cite_mvp.h5mu",
     "spatial": "spatial_mvp.h5ad",
-    "perturb_seq": "perturb_seq_mvp_object.rds",
-    "hto_demux": "hto_demux_mvp_object.rds",
-    "genotype_demux": "genotype_demux_mvp_object.rds",
-    "functional_state": "functional_state_mvp_object.rds",
-    "tumor_sc": "tumor_sc_mvp_object.rds",
-    "clinical_assoc": "clinical_assoc_mvp_object.rds",
+    "perturb_seq": "perturb_seq_mvp_object.json",
+    "hto_demux": "hto_demux_mvp_object.json",
+    "genotype_demux": "genotype_demux_mvp_object.json",
+    "functional_state": "functional_state_mvp_object.json",
+    "tumor_sc": "tumor_sc_mvp_object.json",
+    "clinical_assoc": "clinical_assoc_mvp_object.json",
     "method_tools": "cellxgene_ready.h5ad",
-    "methylation": "methylation_mvp_object.rds",
-    "proteomics": "proteomics_mvp_object.rds",
-    "publicdb": "publicdb_mvp_object.rds",
-    "wgcna": "wgcna_mvp_object.rds",
-    "single_gene": "single_gene_mvp_object.rds",
+    "methylation": "methylation_mvp_object.json",
+    "proteomics": "proteomics_mvp_object.json",
+    "publicdb": "publicdb_mvp_object.json",
+    "wgcna": "wgcna_mvp_object.json",
+    "single_gene": "single_gene_mvp_object.json",
 }
 
 GLOBAL_MVP_TABLE_COLUMNS: tuple[str, ...] = (
@@ -281,7 +281,7 @@ def module_mvp_output_spec(module_name: str) -> dict[str, Any]:
     return {
         "tables": list(MODULE_MVP_TABLES.get(module_name, ("mvp_summary.tsv",))),
         "figures": list(MODULE_MVP_FIGURES.get(module_name, ("mvp_overview.png",))),
-        "object": MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.rds"),
+        "object": MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.json"),
         "table_schemas": module_mvp_table_schemas(module_name),
     }
 
@@ -704,7 +704,7 @@ def write_mvp_object(
     stats: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     objects_dir.mkdir(parents=True, exist_ok=True)
-    object_name = MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.rds")
+    object_name = MODULE_MVP_OBJECTS.get(module_name, f"{module_name}_mvp_object.json")
     object_path = objects_dir / object_name
     manifest_path = objects_dir / "mvp_object_manifest.json"
     payload = {

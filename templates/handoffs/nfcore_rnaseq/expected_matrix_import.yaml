@@ -2,19 +2,19 @@ handoff_id: nfcore_rnaseq_to_ultimate_rnaseq
 execution_status: not_executed_by_ultimate
 upstream_workflow: nf-core/rnaseq
 upstream_inputs:
-  fastq_samplesheet: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_rnaseq_samplesheet.csv"
-  params_file: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_rnaseq_params.yaml"
-  nextflow_config: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_rnaseq_nextflow.config"
+  fastq_samplesheet: "jobs/<job_id>/config/nfcore_rnaseq_samplesheet.csv"
+  params_file: "jobs/<job_id>/config/nfcore_rnaseq_params.yaml"
+  nextflow_config: "jobs/<job_id>/config/nfcore_rnaseq_nextflow.config"
 expected_upstream_outputs:
   raw_count_matrix_candidates:
-    - "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_rnaseq/star_salmon/salmon.merged.gene_counts.tsv"
-    - "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_rnaseq/featurecounts/featurecounts.merged.counts.tsv"
+    - "jobs/<job_id>/runs/nfcore_rnaseq/star_salmon/salmon.merged.gene_counts.tsv"
+    - "jobs/<job_id>/runs/nfcore_rnaseq/featurecounts/featurecounts.merged.counts.tsv"
   exploratory_normalized_matrix_candidates:
-    - "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_rnaseq/star_salmon/salmon.merged.gene_tpm.tsv"
-  multiqc_html: "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_rnaseq/multiqc/star_salmon/multiqc_report.html"
+    - "jobs/<job_id>/runs/nfcore_rnaseq/star_salmon/salmon.merged.gene_tpm.tsv"
+  multiqc_html: "jobs/<job_id>/runs/nfcore_rnaseq/multiqc/star_salmon/multiqc_report.html"
 ultimate_import_config:
   project:
-    output_dir: "/shared/shen/2026/ultimate/jobs/<job_id>/ultimate_downstream"
+    output_dir: "jobs/<job_id>/ultimate_downstream"
     is_demo: false
   design:
     condition_column: "<reviewed_condition_column>"

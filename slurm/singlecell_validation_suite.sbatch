@@ -1,21 +1,48 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ult_sc_validate
-#SBATCH --output=/shared/shen/2026/ultimate/logs/%x_%j.out
-#SBATCH --error=/shared/shen/2026/ultimate/logs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 
 set -euo pipefail
 
-PROJECT_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
-CORE_ENV="${ULTIMATE_CORE_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-core}"
+PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" || ! -d "$PROJECT_ROOT/src/ultimate" ]]; then
+  echo "Set ULTIMATE_ROOT to the Ultimate checkout, or submit from its root." >&2
+  exit 2
+fi
+export ULTIMATE_ROOT="$PROJECT_ROOT"
+# Runtime artefacts live beside the code root on shared deployments; fall back to
+# an in-checkout environment only when no runtime environment exists.
+RUNTIME_ROOT="${ULTIMATE_RUNTIME_ROOT:-$(dirname -- "$PROJECT_ROOT")/ultimate_runtime}"
+export ULTIMATE_RUNTIME_ROOT="$RUNTIME_ROOT"
+if [[ -n "${ULTIMATE_CORE_ENV:-}" ]]; then
+  CORE_ENV="$ULTIMATE_CORE_ENV"
+else
+  CORE_ENV=""
+  for candidate in \
+    "$RUNTIME_ROOT/envs/ultimate-core" \
+    "$PROJECT_ROOT/.venv" \
+    "$PROJECT_ROOT/.conda/envs/ultimate-core"
+  do
+    if [[ -x "$candidate/bin/python" ]]; then
+      CORE_ENV="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$CORE_ENV" ]]; then
+    echo "No Ultimate core environment found. Build it with: sbatch slurm/xielab_setup_runtime_envs.sbatch" >&2
+    exit 2
+  fi
+fi
 SCRNA_ENV="${ULTIMATE_SCRNA_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-scrna}"
-SCRNA_FALLBACK_ENV="${ULTIMATE_SCRNA_FALLBACK_ENV:-/shared/shen/2026/singlecell_workbench/.conda/envs/scw-py311}"
+SCRNA_FALLBACK_ENV="${ULTIMATE_SCRNA_FALLBACK_ENV:-${ULTIMATE_EXTERNAL_ROOT:-$PROJECT_ROOT/external}/singlecell_workbench/.conda/envs/scw-py311}"
 SCATAC_ENV="${ULTIMATE_SCATAC_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-scatac-py}"
 SPATIAL_ENV="${ULTIMATE_SPATIAL_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-spatial-py}"
 GENOME_ENV="${ULTIMATE_GENOME_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-genome-mtdna}"
-CONDA_SH="${CONDA_SH:-/share/home/nshen/miniconda3/etc/profile.d/conda.sh}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 
 mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/audits" "$PROJECT_ROOT/validations"
 source "$CONDA_SH"
@@ -77,7 +104,7 @@ run_initial_audit() {
 
 run_scrna_validation() {
   local out_dir="$PROJECT_ROOT/validations/slurm_scrna_nsclc_lambrechts"
-  local input_h5ad="/shared/shen/2026/nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad"
+  local input_h5ad="${ULTIMATE_EXTERNAL_ROOT:-$PROJECT_ROOT/external}/nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad"
   if [[ -x "$SCRNA_ENV/bin/python" ]]; then
     "$SCRNA_ENV/bin/python" "$PROJECT_ROOT/01_tools/validate_scrna_nsclc.py" \
       --input-h5ad "$input_h5ad" \
@@ -97,12 +124,12 @@ run_mtdna_validation() {
   local out_dir="$PROJECT_ROOT/validations/slurm_mtdna_0518"
   if [[ -x "$GENOME_ENV/bin/python" ]]; then
     "$GENOME_ENV/bin/python" "$PROJECT_ROOT/01_tools/validate_mtdna_0518.py" \
-      --source-root "/shared/shen/2026/0518" \
+      --source-root "${ULTIMATE_EXTERNAL_ROOT:-$PROJECT_ROOT/external}/0518" \
       --output-dir "$out_dir"
   else
     conda activate "$CORE_ENV"
     python "$PROJECT_ROOT/01_tools/validate_mtdna_0518.py" \
-      --source-root "/shared/shen/2026/0518" \
+      --source-root "${ULTIMATE_EXTERNAL_ROOT:-$PROJECT_ROOT/external}/0518" \
       --output-dir "$out_dir"
   fi
 }
@@ -111,7 +138,7 @@ run_scdna_validation() {
   local out_dir="$PROJECT_ROOT/validations/slurm_scdna_0518"
   conda activate "$CORE_ENV"
   python "$PROJECT_ROOT/01_tools/validate_scdna_0518.py" \
-    --source-root "/shared/shen/2026/0518" \
+    --source-root "${ULTIMATE_EXTERNAL_ROOT:-$PROJECT_ROOT/external}/0518" \
     --output-dir "$out_dir"
 }
 
@@ -132,7 +159,7 @@ run_vdj_validation() {
 import scirpy as ir
 
 adata = ir.io.read_10x_vdj(
-    "/shared/shen/2026/ultimate/public_data/vdj/filtered_contig_annotations.csv",
+    str(__import__("pathlib").Path(__import__("os").environ["ULTIMATE_ROOT"]) / "public_data/vdj/filtered_contig_annotations.csv"),
     filtered=True,
 )
 print({"scirpy_vdj_cells": int(adata.n_obs)})
@@ -197,7 +224,7 @@ run_spatial_validation() {
 
 run_method_tools_validation() {
   local out_dir="$PROJECT_ROOT/validations/slurm_method_tools_nsclc"
-  local input_h5ad="/shared/shen/2026/nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad"
+  local input_h5ad="${ULTIMATE_EXTERNAL_ROOT:-$PROJECT_ROOT/external}/nsclc_virtual_sc/02_processed_scRNA/Lambrechts_all_harmonized.h5ad"
   if [[ -x "$SCRNA_ENV/bin/python" ]]; then
     "$SCRNA_ENV/bin/python" "$PROJECT_ROOT/01_tools/validate_method_tools_scrna.py" \
       --input-h5ad "$input_h5ad" \

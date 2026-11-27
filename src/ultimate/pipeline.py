@@ -17,20 +17,45 @@ from ultimate.plot_style import generate_run_figure_qc, generate_style_review, s
 from ultimate.preflight import run_preflight
 from ultimate.raw_qc import run_raw_qc
 from ultimate.report import build_report
+from ultimate.runtime import RunTrace, ThreadBudget, apply_thread_budget, thread_budget, trace_stage
 from ultimate.reproducibility import export_reproducible_package, refresh_job_level_delivery_mirrors
 
 
-def run_pipeline_from_config(config_path: Path, *, production_approval_path: Path | None = None) -> dict[str, Any]:
-    loaded = load_config(config_path)
-    loaded.raw["_config_path"] = str(loaded.path)
-    return run_pipeline(loaded.raw, config_path=loaded.path, production_approval_path=production_approval_path)
+def run_pipeline_from_config(
+    config_path: Path, *, production_approval_path: Path | None = None,
+    threads: int | None = None, trace: RunTrace | None = None,
+) -> dict[str, Any]:
+    with trace_stage(trace, "config"):
+        loaded = load_config(config_path)
+        loaded.raw["_config_path"] = str(loaded.path)
+    return run_pipeline(loaded.raw, config_path=loaded.path,
+                        production_approval_path=production_approval_path,
+                        threads=threads, trace=trace)
 
 
-def run_pipeline(config: dict[str, Any], *, config_path: Path | None = None, production_approval_path: Path | None = None) -> dict[str, Any]:
+def run_pipeline(
+    config: dict[str, Any], *, config_path: Path | None = None,
+    production_approval_path: Path | None = None, threads: int | None = None,
+    trace: RunTrace | None = None,
+) -> dict[str, Any]:
+    """Existing sequential pipeline with a scoped native thread budget."""
+    with trace_stage(trace, "run"):
+        budget = thread_budget(config, threads)
+        with apply_thread_budget(budget):
+            return _run_pipeline(config, config_path=config_path,
+                                 production_approval_path=production_approval_path,
+                                 budget=budget, trace=trace)
+
+
+def _run_pipeline(
+    config: dict[str, Any], *, config_path: Path | None, production_approval_path: Path | None,
+    budget: ThreadBudget, trace: RunTrace | None,
+) -> dict[str, Any]:
     out_dir = output_dir(config)
     run_id = str(config.get("_run_id") or _run_id(config))
     config["_run_id"] = run_id
-    production_approval = _load_pipeline_approval(config, config_path=config_path, output_dir=out_dir, approval_path=production_approval_path)
+    with trace_stage(trace, "approval"):
+        production_approval = _load_pipeline_approval(config, config_path=config_path, output_dir=out_dir, approval_path=production_approval_path)
     if production_approval:
         config["_production_approval"] = production_approval
     for directory in ("results/figures", "results/tables", "objects", "reports", "logs", "raw_qc"):
@@ -38,11 +63,12 @@ def run_pipeline(config: dict[str, Any], *, config_path: Path | None = None, pro
     active_style = set_active_style_from_config(config)
     active_figure_options = set_active_figure_options_from_config(config)
     config_snapshot = dump_yaml(config, out_dir / "config_snapshot.yaml")
-    preflight = run_preflight(config, write=True)
-    if str(preflight.get("status", "")).startswith("blocked"):
-        raise RuntimeError(f"Preflight blocked run: {preflight['status']}")
-    samples = load_samples(config)
-    analysis_request = load_analysis_request(config)
+    with trace_stage(trace, "preflight"):
+        preflight = run_preflight(config, write=True)
+        if str(preflight.get("status", "")).startswith("blocked"):
+            raise RuntimeError(f"Preflight blocked run: {preflight['status']}")
+        samples = load_samples(config)
+        analysis_request = load_analysis_request(config)
     style_review = generate_style_review(out_dir / "reports" / "style_review")
     slurm_context = _slurm_context()
     module_manifests = []
@@ -57,19 +83,21 @@ def run_pipeline(config: dict[str, Any], *, config_path: Path | None = None, pro
                 "config": config.get("_config_path", "<config.yaml>"),
             },
         )
-        raw_manifest = run_raw_qc(
-            module_name=module_name,
-            config=config,
-            output_dir=out_dir,
-            samples=samples,
-        )
-        _attach_raw_handoff(config, module_name, raw_manifest)
-        module_manifest = run_module(
-            module_name=module_name,
-            config=config,
-            output_dir=out_dir,
-            samples=samples,
-        )
+        with trace_stage(trace, "raw_qc", module=module_name):
+            raw_manifest = run_raw_qc(
+                module_name=module_name,
+                config=config,
+                output_dir=out_dir,
+                samples=samples,
+            )
+            _attach_raw_handoff(config, module_name, raw_manifest)
+        with trace_stage(trace, "module", module=module_name):
+            module_manifest = run_module(
+                module_name=module_name,
+                config=config,
+                output_dir=out_dir,
+                samples=samples,
+            )
         _attach_slurm_to_backend(module_manifest, slurm_context)
         module_manifest["raw_qc"] = raw_manifest
         module_manifests.append(module_manifest)
@@ -98,11 +126,39 @@ def run_pipeline(config: dict[str, Any], *, config_path: Path | None = None, pro
     figure_qc = generate_run_figure_qc(out_dir, style=active_style)
     advanced_backend_execution = _write_advanced_backend_execution(out_dir, module_manifests)
     run_level_fields = _aggregate_run_level_fields(module_manifests, delivery_gate)
+    primary_input_matrix = next((str(mod.get("input_matrix")) for mod in module_manifests if isinstance(mod, dict) and mod.get("input_matrix")), "")
+    primary_input_path = next((str(mod.get("input_path")) for mod in module_manifests if isinstance(mod, dict) and mod.get("input_path")), "")
+    primary_checksum = next((str(mod.get("input_checksum")) for mod in module_manifests if isinstance(mod, dict) and mod.get("input_checksum")), "")
+    primary_raw_dims = next((mod.get("raw_dimensions") for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("raw_dimensions"), dict)), None)
+    n_features = next((int(mod["n_features"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_features"), int)), None)
+    n_samples = next((int(mod["n_samples"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_samples"), int)), None)
+    n_genes = next((int(mod["n_genes"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_genes"), int)), None)
+    n_cells = next((int(mod["n_cells"]) for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("n_cells"), int)), None)
+    primary_samples = next((mod.get("samples") for mod in module_manifests if isinstance(mod, dict) and isinstance(mod.get("samples"), list) and mod.get("samples")), None)
+    all_checksums = {}
+    for mod in module_manifests:
+        if isinstance(mod, dict) and isinstance(mod.get("input_checksums"), dict):
+            all_checksums.update(mod["input_checksums"])
+    pipeline_ingestion = {
+        str(mod.get("module") or f"mod_{i}"): mod.get("ingestion_evidence")
+        for i, mod in enumerate(module_manifests) if isinstance(mod, dict) and mod.get("ingestion_evidence")
+    }
     manifest = {
         "run_id": run_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": run_summary["status"],
         **run_level_fields,
+        "input_matrix": primary_input_matrix,
+        "input_path": primary_input_path,
+        "input_checksum": primary_checksum,
+        "input_checksums": all_checksums,
+        "samples": primary_samples or [],
+        "n_features": n_features,
+        "n_samples": n_samples,
+        "n_genes": n_genes,
+        "n_cells": n_cells,
+        "raw_dimensions": primary_raw_dims,
+        "ingestion_evidence": pipeline_ingestion,
         "project": config.get("project", {}),
         "analysis_request": analysis_request,
         "output_dir": str(out_dir),
@@ -111,6 +167,7 @@ def run_pipeline(config: dict[str, Any], *, config_path: Path | None = None, pro
         "slurm_job_id": slurm_context.get("slurm_job_id", ""),
         "slurm_job_name": slurm_context.get("slurm_job_name", ""),
         "slurm": slurm_context,
+        "thread_budget": budget.as_dict(),
         "python": {
             "version": sys.version.split()[0],
             "executable": sys.executable,
@@ -142,7 +199,8 @@ def run_pipeline(config: dict[str, Any], *, config_path: Path | None = None, pro
     manifest_path = out_dir / "run_manifest.json"
     manifest["run_manifest_path"] = str(manifest_path)
     manifest["logs"]["run_context"] = str(_write_run_context_log(out_dir, manifest))
-    return finalize_run_outputs(out_dir, manifest_path, manifest)
+    with trace_stage(trace, "finalize"):
+        return finalize_run_outputs(out_dir, manifest_path, manifest)
 
 
 def _write_advanced_backend_execution(run_dir: Path, module_manifests: list[dict[str, Any]]) -> dict[str, Any]:

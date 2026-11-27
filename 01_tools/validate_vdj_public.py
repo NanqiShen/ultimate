@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -17,7 +18,7 @@ import pandas as pd
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate public 10x VDJ contig and clonotype tables.")
-    parser.add_argument("--input-dir", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/vdj"))
+    parser.add_argument("--input-dir", type=Path, default=Path(str(project_root() / 'public_data/vdj')))
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
     manifest = run_validation(args.input_dir, args.output_dir)

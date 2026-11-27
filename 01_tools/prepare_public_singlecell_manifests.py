@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -109,7 +110,7 @@ PUBLIC_DATASETS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare public single-cell data manifest placeholders.")
-    parser.add_argument("--root", type=Path, default=Path("/shared/shen/2026/ultimate"))
+    parser.add_argument("--root", type=Path, default=Path(str(project_root())))
     parser.add_argument("--mode", choices=["manifest", "download"], default="manifest")
     args = parser.parse_args()
     root = args.root.resolve()

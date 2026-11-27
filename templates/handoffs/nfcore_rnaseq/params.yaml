@@ -1,5 +1,5 @@
-input: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_rnaseq_samplesheet.csv"
-outdir: "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_rnaseq"
+input: "jobs/<job_id>/config/nfcore_rnaseq_samplesheet.csv"
+outdir: "jobs/<job_id>/runs/nfcore_rnaseq"
 genome: "GRCh38"
 aligner: "star_salmon"
 multiqc_title: "<job_id> nf-core/rnaseq handoff QC"

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
 
 
 RNASEQ_DE_BACKEND_ID = "rnaseq.de.deseq2_edger"
@@ -57,10 +58,14 @@ def run_rnaseq_de_backend(
     else:
         reason = _design_blocker(samples, design)
     if not reason:
-        rscript = _resolve_rscript(module_cfg)
-        if not rscript:
+        try:
+            rscript = _resolve_rscript(module_cfg)
+        except ValueError as exc:
+            rscript = ""
+            reason = f"invalid_rscript_config:{exc}"
+        if not reason and not rscript:
             reason = "dependency_missing:Rscript"
-        else:
+        if not reason:
             versions = _r_package_versions(rscript)
             if not (versions.get("DESeq2") or versions.get("edgeR")):
                 reason = "dependency_missing:DESeq2_or_edgeR"
@@ -158,12 +163,9 @@ def _design_blocker(samplesheet_path: Path, design: dict[str, Any]) -> str:
 
 
 def _resolve_rscript(module_cfg: dict[str, Any]) -> str:
-    de_cfg = module_cfg.get("de_backend") if isinstance(module_cfg.get("de_backend"), dict) else {}
-    configured = de_cfg.get("rscript") or de_cfg.get("rscript_path") or module_cfg.get("rscript_path")
-    if configured:
-        path = Path(str(configured)).expanduser()
-        return str(path) if path.exists() else ""
-    return shutil.which("Rscript") or ""
+    """Route to the R that owns DESeq2/edgeR, not just the first one on PATH."""
+    resolved = resolve_rscript("rnaseq", module_cfg)
+    return str(resolved) if resolved is not None else ""
 
 
 def _backend_script_path(module_cfg: dict[str, Any]) -> Path:
@@ -171,7 +173,11 @@ def _backend_script_path(module_cfg: dict[str, Any]) -> Path:
     configured = de_cfg.get("script") or de_cfg.get("script_path")
     if configured:
         return Path(str(configured)).expanduser()
-    return Path(__file__).resolve().parents[2] / "scripts" / "R" / "rnaseq_de_backend.R"
+    try:
+        return resolve_packaged_asset("scripts", "R", "rnaseq_de_backend.R")
+    except FileNotFoundError:
+        # Caller turns a missing script into an explicit skipped backend.
+        return Path(__file__).resolve().parents[2] / "scripts" / "R" / "rnaseq_de_backend.R"
 
 
 def _r_package_versions(rscript: str) -> dict[str, str]:
@@ -257,7 +263,10 @@ def _write_skip_outputs(
     artifacts["manifest"].write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     _write_placeholder_png(artifacts["volcano"], "RNA-seq DE backend skipped")
     _write_placeholder_png(artifacts["top_gene_heatmap"], "RNA-seq DE backend skipped")
-    artifacts["rds"].write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    # Python never writes a JSON payload into a .rds filename: on skip we emit
+    # a separately named honest JSON file instead of faking an R object.
+    skip_object = artifacts["rds"].with_name("rnaseq_de_backend_skip.json")
+    skip_object.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
 
 def _write_placeholder_png(path: Path, title: str) -> None:

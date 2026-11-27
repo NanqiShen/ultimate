@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from ultimate.template_resources import find_template_dir
+from ultimate.template_resources import find_template_dir, template_root_candidates
 
 
 NFCORE_HANDOFFS = {
@@ -22,6 +22,21 @@ NFCORE_HANDOFFS = {
         "required_phrase": "Ultimate does not execute nf-core/scrnaseq",
     },
 }
+
+# Path and partition literals that must never appear in a handoff template: they
+# are either PKU-specific or a queue name that does not exist on XieLab.
+FORBIDDEN_TEMPLATE_TOKENS = (
+    "/share/home",
+    "/shared/shen",
+    "hpc-sbatch",
+    "hpc-run",
+    "queue = 'comp'",
+    'queue = "comp"',
+    "queue = 'cpu'",
+    'queue = "cpu"',
+)
+
+SCANNED_TEMPLATE_FILES = ("nextflow.config", "README.md")
 
 REQUIRED_FILES = (
     "README.md",
@@ -45,9 +60,13 @@ def run_handoff_check(*, root: Path | None = None, output_dir: Path | None = Non
     rows = []
     for handoff_name, spec in NFCORE_HANDOFFS.items():
         rows.extend(_check_handoff_template(handoff_name, spec))
+    rows.extend(_scan_all_handoff_templates())
 
     ready_count = sum(1 for row in rows if row["status"] == "ready")
-    blocked = [row for row in rows if row["status"] != "ready"]
+    # `skipped` records an inapplicable check (e.g. no nextflow.config for a
+    # non-nf-core handoff) and must not block delivery; only `blocked` does.
+    blocked = [row for row in rows if row["status"] == "blocked"]
+    skipped_count = sum(1 for row in rows if row["status"] == "skipped")
     table_path = output_dir / "handoff_check.tsv"
     _write_rows(table_path, rows)
     manifest = {
@@ -55,10 +74,12 @@ def run_handoff_check(*, root: Path | None = None, output_dir: Path | None = Non
         "status": "ready" if not blocked else "blocked",
         "root": str(resolved_root),
         "output_dir": str(output_dir),
-        "scope": "nf-core raw upstream handoff QA only; Ultimate does not execute these upstream workflows.",
+        "scope": "nf-core raw upstream handoff QA plus a full static scan of every handoff template; Ultimate does not execute these upstream workflows.",
         "checked_handoffs": sorted(NFCORE_HANDOFFS),
+        "scanned_handoff_templates": _handoff_template_names(),
         "ready_checks": ready_count,
         "blocked_checks": len(blocked),
+        "skipped_checks": skipped_count,
         "blockers": [f"{row['handoff']}:{row['check']}:{row['message']}" for row in blocked],
         "handoff_check_table": str(table_path),
     }
@@ -142,6 +163,68 @@ def _check_expected_import(handoff_name: str, spec: dict[str, str], payload: dic
     if isinstance(module_cfg, dict):
         rows.append(_row(handoff_name, "expected_import_delivery_guard", "ready" if module_cfg.get("delivery_allowed") is False else "blocked", str(module_cfg.get("delivery_allowed", ""))))
         rows.append(_row(handoff_name, "expected_import_non_delivery_reason", "ready" if module_cfg.get("non_delivery_reason") else "blocked", str(module_cfg.get("non_delivery_reason", ""))))
+    return rows
+
+
+def _handoffs_root() -> Path | None:
+    for root in template_root_candidates():
+        candidate = root / "handoffs"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _handoff_template_names() -> list[str]:
+    root = _handoffs_root()
+    if root is None:
+        return []
+    return sorted(path.name for path in root.iterdir() if path.is_dir())
+
+
+def _scan_all_handoff_templates() -> list[dict[str, str]]:
+    """Statically scan every handoff template for forbidden site literals.
+
+    The per-handoff depth checks only cover the two nf-core workflows. This sweep
+    covers all templates so a stale PKU home path or a `comp`/`cpu` queue cannot
+    slip into a new handoff unnoticed.
+    """
+    root = _handoffs_root()
+    if root is None:
+        return [_row("<all>", "template_root", "blocked", "handoffs template root not found")]
+    rows: list[dict[str, str]] = []
+    for name in _handoff_template_names():
+        handoff_dir = root / name
+        for filename in SCANNED_TEMPLATE_FILES:
+            path = handoff_dir / filename
+            if not path.is_file():
+                # Only README.md is mandatory; nextflow.config exists solely for
+                # the nf-core handoffs and is checked when present.
+                status = "blocked" if filename == "README.md" else "skipped"
+                rows.append(_row(name, f"static_scan:{filename}", status,
+                                 "file missing" if filename == "README.md" else "not_an_nfcore_handoff"))
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            hits = [token for token in FORBIDDEN_TEMPLATE_TOKENS if token in text]
+            rows.append(
+                _row(
+                    name,
+                    f"static_scan:{filename}",
+                    "blocked" if hits else "ready",
+                    f"forbidden literals: {', '.join(hits)}" if hits else "no forbidden site literals",
+                )
+            )
+        config_path = handoff_dir / "nextflow.config"
+        if config_path.is_file():
+            text = config_path.read_text(encoding="utf-8", errors="ignore")
+            partition_driven = "ULTIMATE_SLURM_PARTITION" in text
+            rows.append(
+                _row(
+                    name,
+                    "static_scan:partition_from_env",
+                    "ready" if partition_driven else "blocked",
+                    "queue reads ULTIMATE_SLURM_PARTITION" if partition_driven else "queue is not env-driven",
+                )
+            )
     return rows
 
 

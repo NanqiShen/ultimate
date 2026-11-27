@@ -2,18 +2,18 @@ handoff_id: nfcore_scrnaseq_to_ultimate_scrna
 execution_status: not_executed_by_ultimate
 upstream_workflow: nf-core/scrnaseq
 upstream_inputs:
-  fastq_samplesheet: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_scrnaseq_samplesheet.csv"
-  params_file: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_scrnaseq_params.yaml"
-  nextflow_config: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_scrnaseq_nextflow.config"
+  fastq_samplesheet: "jobs/<job_id>/config/nfcore_scrnaseq_samplesheet.csv"
+  params_file: "jobs/<job_id>/config/nfcore_scrnaseq_params.yaml"
+  nextflow_config: "jobs/<job_id>/config/nfcore_scrnaseq_nextflow.config"
 expected_upstream_outputs:
   matrix_candidates:
-    - "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_scrnaseq/<sample>/outs/filtered_feature_bc_matrix.h5"
-    - "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_scrnaseq/<sample>/outs/filtered_feature_bc_matrix/"
-    - "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_scrnaseq/<sample>/solo/*/filtered/"
-  multiqc_html: "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_scrnaseq/multiqc/multiqc_report.html"
+    - "jobs/<job_id>/runs/nfcore_scrnaseq/<sample>/outs/filtered_feature_bc_matrix.h5"
+    - "jobs/<job_id>/runs/nfcore_scrnaseq/<sample>/outs/filtered_feature_bc_matrix/"
+    - "jobs/<job_id>/runs/nfcore_scrnaseq/<sample>/solo/*/filtered/"
+  multiqc_html: "jobs/<job_id>/runs/nfcore_scrnaseq/multiqc/multiqc_report.html"
 ultimate_import_config:
   project:
-    output_dir: "/shared/shen/2026/ultimate/jobs/<job_id>/ultimate_downstream"
+    output_dir: "jobs/<job_id>/ultimate_downstream"
     is_demo: false
   modules:
     scrna:

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ultimate.paths import cache_root, environment_root
+
 
 DECISIONS = (
     "keep_default",
@@ -442,7 +444,8 @@ def run_prune_tools(root: Path, output_dir: Path | None = None, yes: bool = Fals
 
 def _env_paths(root: Path) -> dict[str, Path]:
     env_names = sorted({tool.env for tool in TOOL_REGISTRY if tool.env})
-    return {env: root / ".conda" / "envs" / env for env in env_names}
+    env_root = environment_root(root)
+    return {env: env_root / env for env in env_names}
 
 
 def _collect_checks(env_paths: dict[str, Path], specs: tuple[ToolSpec, ...] | list[ToolSpec]) -> dict[str, dict[str, bool]]:
@@ -589,12 +592,12 @@ def _storage_estimate(root: Path, audit_rows: list[dict[str, Any]], *, detailed:
     target = root if root.exists() else root.parent
     usage = shutil.disk_usage(target)
     paths = {
-        "conda_envs": root / ".conda" / "envs",
-        "conda_pkgs": root / ".conda" / "pkgs",
-        "public_data": root / "public_data",
+        "conda_envs": environment_root(root),
+        "conda_pkgs": cache_root(root) / "conda_pkgs",
+        "public_data": cache_root(root) / "public_data",
         "validations": root / "validations",
-        "nextflow_cache": root / ".nextflow",
-        "apptainer_cache": root / ".apptainer",
+        "nextflow_cache": cache_root(root) / "nextflow",
+        "apptainer_cache": cache_root(root) / "apptainer",
     }
     rows = [
         {"metric": "filesystem_total_gb", "path": str(target), "value": _bytes_to_gb(usage.total), "note": ""},
@@ -664,11 +667,13 @@ def _install_batch(root: Path, project_root: Path, batch: str, output_dir: Path)
     if batch not in BATCH_ENV_FILES:
         return [{"batch": batch, "status": "install_not_supported_for_batch", "log": "", "command": ""}]
     mamba = shutil.which("mamba") or "mamba"
-    (root / ".conda" / "pkgs").mkdir(parents=True, exist_ok=True)
+    env_root = environment_root(root)
+    conda_pkgs = cache_root(root) / "conda_pkgs"
+    conda_pkgs.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     for env_name, env_file_name in BATCH_ENV_FILES[batch]:
         env_file = project_root / "envs" / env_file_name
-        prefix = root / ".conda" / "envs" / env_name
+        prefix = env_root / env_name
         log_path = output_dir / f"install_{batch}_{env_name}.log"
         if not env_file.exists():
             rows.append({"batch": batch, "env": env_name, "status": "missing_env_file", "log": str(log_path), "command": str(env_file), "condarc": ""})
@@ -682,7 +687,7 @@ def _install_batch(root: Path, project_root: Path, batch: str, output_dir: Path)
             if env_exists:
                 command.append("--prune")
             env = os.environ.copy()
-            env["CONDA_PKGS_DIRS"] = str(root / ".conda" / "pkgs")
+            env["CONDA_PKGS_DIRS"] = str(conda_pkgs)
             if condarc is None:
                 env.pop("CONDARC", None)
                 condarc_label = "default_channels"

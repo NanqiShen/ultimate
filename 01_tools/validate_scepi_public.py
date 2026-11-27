@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -22,14 +23,14 @@ from ultimate.config import dump_yaml
 from ultimate.pipeline import finalize_run_outputs, run_pipeline_from_config
 
 
-DEFAULT_INPUT_H5 = Path("/shared/shen/2026/ultimate/public_data/scatac/10k_pbmc_ATACv2_nextgem_Chromium_Controller_filtered_peak_bc_matrix.h5")
+DEFAULT_INPUT_H5 = Path(str(project_root() / 'public_data/scatac/10k_pbmc_ATACv2_nextgem_Chromium_Controller_filtered_peak_bc_matrix.h5'))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate Ultimate SCEPI matrix backend using a public scATAC-derived region matrix.")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--input-h5", type=Path, default=DEFAULT_INPUT_H5)
-    parser.add_argument("--project-root", type=Path, default=Path("/shared/shen/2026/ultimate"))
+    parser.add_argument("--project-root", type=Path, default=Path(str(project_root())))
     parser.add_argument("--max-features", type=int, default=800)
     parser.add_argument("--max-cells", type=int, default=240)
     args = parser.parse_args()

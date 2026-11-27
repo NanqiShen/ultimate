@@ -1,5 +1,5 @@
-input: "/shared/shen/2026/ultimate/jobs/<job_id>/config/nfcore_airrflow_samplesheet.csv"
-outdir: "/shared/shen/2026/ultimate/jobs/<job_id>/runs/nfcore_airrflow"
+input: "jobs/<job_id>/config/nfcore_airrflow_samplesheet.csv"
+outdir: "jobs/<job_id>/runs/nfcore_airrflow"
 species: "human"
 max_cpus: 12
 max_memory: "64.GB"

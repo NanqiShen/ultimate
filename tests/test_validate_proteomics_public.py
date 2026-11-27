@@ -97,7 +97,7 @@ def test_production_audit_accepts_proteomics_public_validation(tmp_path: Path) -
         (run_dir / "results" / "tables" / f"table_{idx}.tsv").write_text("a\n1\n", encoding="utf-8")
     for idx in range(4):
         (run_dir / "results" / "figures" / f"figure_{idx}.png").write_text("png", encoding="utf-8")
-    (run_dir / "objects" / "proteomics_mvp_object.rds").write_text("object", encoding="utf-8")
+    (run_dir / "objects" / "proteomics_mvp_object.json").write_text("object", encoding="utf-8")
     (run_dir / "reports" / "report.html").write_text("<html>report</html>", encoding="utf-8")
     (run_dir / "reports" / "methods.md").write_text("methods", encoding="utf-8")
     (run_dir / "run_manifest.json").write_text(

@@ -10,7 +10,7 @@ project:
   real_customer_delivery: false
 
 batch:
-  root: /shared/shen/2026/ultimate
+  root: ..
   job_prefix: v4_5
   total_runnable_jobs: 100
   chunk_size: 10

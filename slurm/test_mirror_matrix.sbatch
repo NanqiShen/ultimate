@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ult_mirror_mat
-#SBATCH --output=/shared/shen/2026/ultimate/logs/%x_%j.out
-#SBATCH --error=/shared/shen/2026/ultimate/logs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
 #SBATCH --time=00:30:00
 
 set -euo pipefail
 
-PROJECT_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
+PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" || ! -d "$PROJECT_ROOT/src/ultimate" ]]; then
+  echo "Set ULTIMATE_ROOT to the Ultimate checkout, or submit from its root." >&2
+  exit 2
+fi
+export ULTIMATE_ROOT="$PROJECT_ROOT"
 mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/audits/mirror_test"
 
 python - <<'PY'
@@ -42,7 +47,7 @@ for name, url in mirrors.items():
         row["http_error"] = f"{type(exc).__name__}: {exc}"
     rows.append(row)
 
-out = Path("/shared/shen/2026/ultimate/audits/mirror_test/mirror_matrix.json")
+out = Path(str(__import__("pathlib").Path(__import__("os").environ["ULTIMATE_ROOT"]) / "audits/mirror_test/mirror_matrix.json"))
 out.write_text(json.dumps({"generated_at": datetime.now(timezone.utc).isoformat(), "results": rows}, indent=2, ensure_ascii=False), encoding="utf-8")
 print(out.read_text(encoding="utf-8"))
 PY

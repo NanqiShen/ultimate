@@ -146,7 +146,7 @@ def test_spatial_publication_preset_runs_neighborhood_backend_outputs(tmp_path: 
         "results/tables/spatial/spatial_neighborhood_backend_versions.tsv",
         "results/figures/spatial/spatial_autocorrelation.png",
         "results/figures/spatial/domain_marker_preview_heatmap.png",
-        "objects/spatial/spatial_neighborhood_backend.rds",
+        "objects/spatial/spatial_neighborhood_backend.json",
     ]:
         path = run_dir / relative
         assert path.exists() and path.stat().st_size > 0

@@ -461,7 +461,7 @@ def _write_hto_object(
     input_path: str,
     read_summary: dict[str, Any],
 ) -> dict[str, str]:
-    path = objects_dir / "hto_demux_mvp_object.rds"
+    path = objects_dir / "hto_demux_mvp_object.json"
     payload = {
         "object_type": "json_serialized_hto_demux_mvp",
         "input_path": input_path,
@@ -497,7 +497,7 @@ def _write_skip_outputs(*, tables_dir: Path, figures_dir: Path, objects_dir: Pat
     heatmap_path = figures_dir / "hto_heatmap.png"
     save_figure(heatmap_path, style=apply_clinical_journal_style())
     artifacts["figures"]["hto_heatmap"] = str(heatmap_path)
-    object_path = objects_dir / "hto_demux_mvp_object.rds"
+    object_path = objects_dir / "hto_demux_mvp_object.json"
     object_path.write_text(json.dumps(base, indent=2, ensure_ascii=False), encoding="utf-8")
     artifacts["objects"]["mvp_object"] = str(object_path)
     return artifacts

@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ult_scrna_comm_run
-#SBATCH --output=/shared/shen/2026/ultimate/logs/%x_%j.out
-#SBATCH --error=/shared/shen/2026/ultimate/logs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=48G
 #SBATCH --time=04:00:00
 
 set -euo pipefail
 
-PROJECT_ROOT="${ULTIMATE_ROOT:-/shared/shen/2026/ultimate}"
+PROJECT_ROOT="${ULTIMATE_ROOT:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}}"
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" || ! -d "$PROJECT_ROOT/src/ultimate" ]]; then
+  echo "Set ULTIMATE_ROOT to the Ultimate checkout, or submit from its root." >&2
+  exit 2
+fi
+export ULTIMATE_ROOT="$PROJECT_ROOT"
 SCRNA_ENV="${ULTIMATE_SCRNA_ENV:-$PROJECT_ROOT/.conda/envs/ultimate-scrna}"
-CONDA_SH="${CONDA_SH:-/share/home/nshen/miniconda3/etc/profile.d/conda.sh}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 OUT_DIR="${ULTIMATE_SCRNA_COMM_OUT:-$PROJECT_ROOT/validations/slurm_scrna_communication_unified}"
 MATRIX_DIR="${ULTIMATE_SCRNA_COMM_MATRIX:-$PROJECT_ROOT/public_data/scrna_pbmc3k/filtered_gene_bc_matrices/hg19}"
 CONFIG_PATH="$OUT_DIR/config/project.yaml"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ultimate.paths import environment_root, project_root
+
 import json
 import shutil
 from dataclasses import dataclass
@@ -514,20 +516,20 @@ def _tool_available(tool: str, config: dict[str, Any], output_dir: Path) -> bool
     configured = _configured_tool_path(tool, config)
     if configured and configured.exists():
         return True
-    root = _server_root_from_output(config, output_dir)
+    env_root = environment_root(_server_root_from_output(config, output_dir))
     candidates = [
-        root / ".conda" / "envs" / "ultimate-core" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-rnaseq" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-methylation" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-proteomics" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-publicdb" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-wgcna" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-scrna-py" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-scrna-r" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-scatac-py" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-genome-mtdna" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-spatial-py" / "bin" / tool,
-        root / ".conda" / "envs" / "ultimate-vdj" / "bin" / tool,
+        env_root / "ultimate-core" / "bin" / tool,
+        env_root / "ultimate-rnaseq" / "bin" / tool,
+        env_root / "ultimate-methylation" / "bin" / tool,
+        env_root / "ultimate-proteomics" / "bin" / tool,
+        env_root / "ultimate-publicdb" / "bin" / tool,
+        env_root / "ultimate-wgcna" / "bin" / tool,
+        env_root / "ultimate-scrna-py" / "bin" / tool,
+        env_root / "ultimate-scrna-r" / "bin" / tool,
+        env_root / "ultimate-scatac-py" / "bin" / tool,
+        env_root / "ultimate-genome-mtdna" / "bin" / tool,
+        env_root / "ultimate-spatial-py" / "bin" / tool,
+        env_root / "ultimate-vdj" / "bin" / tool,
     ]
     return any(path.exists() for path in candidates) or shutil.which(tool) is not None
 
@@ -554,6 +556,13 @@ def _server_root_from_output(config: dict[str, Any], output_dir: Path) -> Path:
     configured = (config.get("project") or {}).get("server_root")
     if configured:
         return Path(configured)
-    if "/shared/shen/2026/ultimate" in str(output_dir):
-        return Path("/shared/shen/2026/ultimate")
-    return Path.cwd() / "ultimate"
+    # A run directory lives under ``<root>/jobs/<job_id>/...``; walking back to the
+    # segment before ``jobs`` recovers the deployment root even when the CLI was
+    # launched from an unrelated working directory.
+    resolved = output_dir.resolve()
+    parts = resolved.parts
+    if "jobs" in parts:
+        idx = len(parts) - 1 - parts[::-1].index("jobs")
+        if idx > 0:
+            return Path(*parts[:idx])
+    return project_root()

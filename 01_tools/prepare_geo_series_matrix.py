@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import csv
@@ -197,7 +198,7 @@ def _build_config(*, project_name: str, matrix_path: str, samples_path: str) -> 
             "name": project_name,
             "organism": "human",
             "output_dir": f"../runs/{project_name}",
-            "server_root": "/shared/shen/2026/ultimate",
+            "server_root": str(project_root()),
         },
         "samples": {"samplesheet": samples_path},
         "design": {
@@ -208,7 +209,7 @@ def _build_config(*, project_name: str, matrix_path: str, samples_path: str) -> 
             "comparisons": ["tumor_vs_normal"],
         },
         "resources": {
-            "public_cache": "/shared/shen/2026/ultimate/cache/publicdb",
+            "public_cache": str(project_root() / 'cache/publicdb'),
             "source_database": "GEO",
             "geo_accession": "GSE10072",
         },

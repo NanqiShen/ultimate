@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import csv
@@ -25,8 +26,8 @@ VALID_ANALYSIS_LEVELS = {"demo_result", "smoke_backend", "validated_backend", "p
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check Ultimate validation run manifests for guard fields.")
-    parser.add_argument("--root", type=Path, default=Path("/shared/shen/2026/ultimate"))
-    parser.add_argument("--validations-dir", type=Path, default=Path("/shared/shen/2026/ultimate/validations"))
+    parser.add_argument("--root", type=Path, default=Path(str(project_root())))
+    parser.add_argument("--validations-dir", type=Path, default=Path(str(project_root() / 'validations')))
     parser.add_argument("--output-tsv", type=Path, required=True)
     parser.add_argument("--normalize", action="store_true", help="Back up and add missing guard fields to validation manifests.")
     parser.add_argument(

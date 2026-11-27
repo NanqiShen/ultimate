@@ -4,6 +4,7 @@ import json
 import gzip
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from ultimate.cli import main
@@ -118,6 +119,7 @@ def test_raw_upstream_rnaseq_tiny_counts_blocks_missing_quant_tool(tmp_path: Pat
 
 
 def test_raw_upstream_scrna_10x_mtx_evidence_ready(tmp_path: Path) -> None:
+    pytest.importorskip("scipy")
     mtx = tmp_path / "tenx_mtx"
     mtx.mkdir()
     (mtx / "matrix.mtx").write_text(
@@ -141,6 +143,7 @@ def test_raw_upstream_scrna_10x_mtx_evidence_ready(tmp_path: Path) -> None:
 
 
 def test_raw_upstream_scrna_10x_mtx_gz_evidence_ready(tmp_path: Path) -> None:
+    pytest.importorskip("scipy")
     mtx = tmp_path / "tenx_mtx_gz"
     mtx.mkdir()
     _gzip_write(

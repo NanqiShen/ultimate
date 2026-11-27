@@ -569,7 +569,7 @@ def _run_peak_gene_correlation_backend(
     manifest_path = tables_dir / "peak_gene_correlation_backend_manifest.json"
     versions_path = tables_dir / "peak_gene_correlation_backend_versions.tsv"
     heatmap_path = figures_dir / "peak_gene_correlation_heatmap.png"
-    object_path = tables_dir.parents[2] / "objects" / "multiome" / "peak_gene_correlation_backend.rds"
+    object_path = tables_dir.parents[2] / "objects" / "multiome" / "peak_gene_correlation_backend.json"
     artifacts = {
         "tables": {
             "peak_gene_links": str(links_path),

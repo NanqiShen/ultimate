@@ -1,0 +1,13 @@
+name: ultimate-upstream
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - fastqc
+  - multiqc
+  - fastp
+  - salmon
+  - star
+  - subread
+  - samtools
+  - alevin-fry

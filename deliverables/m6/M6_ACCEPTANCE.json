@@ -1,0 +1,250 @@
+{
+  "schema": "ultimate.m6.acceptance.v6",
+  "generated_at": "2026-11-27T02:37:38.897745+00:00",
+  "phase": "M6-P0-Public-Entrypoint-Loop-Closed",
+  "overall_status": "BLOCKED",
+  "status_reason": "M6-P0 public entrypoint loop is completely closed and fully verified end-to-end locally (618 passed, 26 skipped, 0 failed). The generated STARsolo config directly passes ultimate run preflight without manual YAML editing, acceptance strictly validates the final run_manifest.json scRNA runtime records, and genuine multi-sample end-to-end execution with different dimensions (S1 2x2, S2 3x4) succeeds across the full toolchain. P0 is fully completed and ready for sign-off. Overall M6 status remains strictly BLOCKED until P1 cluster execution is approved and completed.",
+  "commit_lineage": {
+    "reported_m5_review_commit": "43d6e7e",
+    "actual_baseline_commit": "4b80344",
+    "p0_initial_fix_commit": "c17e50d",
+    "p0_initial_receipt_commit": "6bc6baa",
+    "p0_resigned_fix_commit": "5d9766b",
+    "p0_resigned_receipt_commit": "56c1773",
+    "p0_final_tightened_code_commit": "20180b7",
+    "p0_final_tightened_receipt_commit": "2ac5860",
+    "p0_targeted_resigned_code_commit": "0193068",
+    "p0_targeted_resigned_receipt_commit": "d623464",
+    "p0_residual_fixed_code_commit": "5830cca",
+    "p0_residual_receipt_commit": "915c6cd",
+    "p0_public_loop_code_commit": "3b0dcdb",
+    "receipt_commit": "HEAD"
+  },
+  "public_entrypoint_loop_specifications": [
+    {
+      "id": "LOOP-1-STAR_CONFIG_SAMPLESHEET",
+      "title": "STARsolo config includes normalized samplesheet for ultimate run preflight",
+      "status": "pass",
+      "detail": "prepare-upstream now renders top-level samples: samplesheet: {samplesheet} and modules.scrna.samplesheet in expected_import_project.yaml, reusing the identical normalized table so ultimate run preflight passes without manual edits or secondary sample definitions."
+    },
+    {
+      "id": "LOOP-2-ACCEPTANCE_READS_SCRNA_RUNTIME_RECORD",
+      "title": "Acceptance reads scRNA module runtime ingestion record from final run_manifest.json",
+      "status": "pass",
+      "detail": "upstream_acceptance.py extracts the scRNA module record from payload['modules'] or payload['samples'], verifying genuine sample-by-sample ingestion, exact dimensions, and triad SHA-256 without fabricating evidence. Import-only runs are explicitly tagged as import verification with delivery_allowed=false."
+    },
+    {
+      "id": "LOOP-3-END_TO_END_CHAIN",
+      "title": "End-to-end chain replacing internal function calls with public CLI/pipeline",
+      "status": "pass",
+      "detail": "test_real_local_ingestion_produces_accepted_manifests executes the complete chain: prepare-upstream -> ultimate run on untouched YAML -> check-upstream-acceptance. With two genuinely different sample inputs (S1 2x2, S2 3x4), both commands exit 0 and acceptance explicitly lists all S1 and S2 checks as passed. Path-swap and tampered-file counterexamples are retained."
+    }
+  ],
+  "counterexample_regressions": [
+    {
+      "test_case": "test_multisample_swapped_s1_s2_input_paths_fails",
+      "scenario": "S1 and S2 input_path swapped in downstream manifest while maintaining all valid files and paths",
+      "expected_outcome": "FAIL with sample_input_path:S1 and/or sample_input_path:S2",
+      "actual_outcome": "FAILED with exit code 1, explicitly named sample_input_path:S1 and sample_input_path:S2"
+    },
+    {
+      "test_case": "test_corrupt_mtx_fails_parsing_and_never_emits_ready",
+      "scenario": "Corrupt matrix.mtx provided to reading entrypoint",
+      "expected_outcome": "Throws RuntimeError, writes status='blocked' (delivery_allowed=False), never 'ready'",
+      "actual_outcome": "PASSED: manifest status='blocked', delivery_allowed=False"
+    },
+    {
+      "test_case": "test_multisample_s2_not_parsed_fails",
+      "scenario": "S2 parsed status is False in downstream manifest",
+      "expected_outcome": "FAIL with sample_parsed:S2",
+      "actual_outcome": "FAILED with exit code 1, reported sample_parsed:S2"
+    },
+    {
+      "test_case": "test_multisample_s2_dimension_mismatch_fails",
+      "scenario": "S2 downstream dimensions tampered to 2x2 instead of 3x4",
+      "expected_outcome": "FAIL with sample_dims:S2",
+      "actual_outcome": "FAILED with exit code 1, reported sample_dims:S2"
+    },
+    {
+      "test_case": "test_multisample_s2_file_tampered_fails",
+      "scenario": "S2 barcodes.tsv.gz tampered after package creation",
+      "expected_outcome": "FAIL with checksum:S2:barcodes",
+      "actual_outcome": "FAILED with exit code 1, reported checksum:S2:barcodes"
+    }
+  ],
+  "genuine_multisample_acceptance": {
+    "status": "pass",
+    "sample_definitions": {
+      "S1": {
+        "dimensions": "2 genes x 2 cells",
+        "files": "standard triad (matrix.mtx.gz, barcodes.tsv.gz, features.tsv.gz)"
+      },
+      "S2": {
+        "dimensions": "3 genes x 4 cells",
+        "files": "standard triad (matrix.mtx.gz, barcodes.tsv.gz, features.tsv.gz)"
+      }
+    },
+    "evidence": "test_real_local_ingestion_produces_accepted_manifests passes full dual-route acceptance with live reading code."
+  },
+  "verification_evidence": {
+    "m6_contract_tests": {
+      "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py",
+      "result": "30 passed, 1 warning in 61.72s (0:01:01)"
+    },
+    "all_upstream_related_tests": {
+      "command": "/opt/anaconda3/bin/pytest -q tests/test_m6_upstream_contract.py tests/test_prepare_upstream.py tests/test_cli.py tests/test_slurm_runtime_layout.py tests/test_handoff_check.py",
+      "result": "143 passed, 1 warning in 118.96s (0:01:58)"
+    },
+    "full_pytest_suite": {
+      "command": "/opt/anaconda3/bin/pytest -q",
+      "result": "618 passed, 26 skipped, 6 warnings in 774.78s (0:12:54), exit code: 0"
+    },
+    "sbatch_syntax_check": {
+      "command": "bash -n slurm/*.sbatch (60 scripts)",
+      "result": "all_ok=yes (60/60 scripts)"
+    },
+    "redline_grep": {
+      "command": "grep -rnE \"/shared/shen|hpc-sbatch|queue = 'comp'|queue = 'cpu'|np\\.exp\\(-months\" src/ scripts/ slurm/ templates/handoffs/ --exclude=README.md",
+      "result": "0 hits (clean)"
+    },
+    "governance_gates_diff": {
+      "command": "git diff 43d6e7e..HEAD -- src/ultimate/delivery_check.py src/ultimate/approval_gate.py src/ultimate/analysis_levels.py",
+      "result": "0 lines deleted / 0 modifications (clean)"
+    },
+    "foodie_isolation": {
+      "command": "grep -rn \"FOODIE\" src/ scripts/ slurm/ tests/",
+      "result": "0 references (completely excluded)"
+    }
+  },
+  "cluster_preconditions_audit": {
+    "slurm": {
+      "account": {
+        "value": "xielab",
+        "status": "confirmed_via_sacctmgr"
+      },
+      "partition": {
+        "value": "compute_pro",
+        "status": "confirmed_via_sinfo_13_nodes_up"
+      },
+      "qos": {
+        "value": "normal",
+        "status": "confirmed"
+      }
+    },
+    "environment": {
+      "micromamba": {
+        "path": "/dshare/xielab/analysisdata/TFC/shennq/ultimate_runtime/micromamba/bin/micromamba",
+        "status": "present"
+      },
+      "ultimate_upstream_env": {
+        "path": "/dshare/xielab/analysisdata/TFC/shennq/ultimate_runtime/envs/ultimate-upstream",
+        "status": "missing",
+        "reason": "environment not built; requires running xielab_setup_upstream_env.sbatch"
+      },
+      "tools": {
+        "fastp": "missing",
+        "salmon": "missing",
+        "STAR": "missing",
+        "fastqc": "missing",
+        "multiqc": "missing",
+        "featureCounts": "missing",
+        "samtools": "missing",
+        "alevin-fry": "missing"
+      }
+    },
+    "reference_indexes": {
+      "salmon_index": {
+        "status": "missing",
+        "reason": "no salmon index in runtime cache or reference root"
+      },
+      "star_index": {
+        "status": "missing",
+        "reason": "no STAR index; full-genome index creation is strictly forbidden"
+      }
+    },
+    "fixtures": {
+      "status": "missing",
+      "reason": "no approved frozen synthetic fixture staged; raw data directory is read-only and empty",
+      "raw_root": "/dshare/xielab/rawdata/TFC/shennq"
+    },
+    "submission_authorization": {
+      "status": "not_granted",
+      "reason": "P1 live execution requires explicit owner confirmation"
+    }
+  },
+  "p1_planned_routes": [
+    {
+      "route": "bulk_rnaseq_salmon",
+      "status": "blocked",
+      "job_id": null,
+      "blocked_by": [
+        "ultimate-upstream environment missing",
+        "pre-validated salmon mini-index missing",
+        "approved small FASTQ fixture missing",
+        "submission authorization pending"
+      ],
+      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/<job_id>/config/upstream/run_upstream.sbatch"
+    },
+    {
+      "route": "scrna_starsolo",
+      "status": "blocked",
+      "job_id": null,
+      "blocked_by": [
+        "ultimate-upstream environment missing",
+        "pre-validated STAR mini-index missing",
+        "10x barcode whitelist missing",
+        "approved small scRNA FASTQ fixture missing",
+        "submission authorization pending"
+      ],
+      "planned_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/<job_id>/config/upstream/run_upstream.sbatch"
+    }
+  ],
+  "artifacts_sha256": {
+    "src/ultimate/cli.py": "70ae4da08c445c2401fd5d847b3b772481d254d2fc2a24f3b2579723f201c574",
+    "src/ultimate/upstream_acceptance.py": "92e773a356c1c9654bd76e001deaf94986e5814874c23f4d87d3b7ff27312a52",
+    "src/ultimate/prepare_upstream.py": "9bc8f0040a23baff8fa9297fd60f856c11724419adeac3b904cf332145171582",
+    "src/ultimate/bulk.py": "cd57ccbf749445ac973284f794b9c1b0051dc1077876f217357f921cc1aa9eae",
+    "src/ultimate/pipeline.py": "0b0c1ec6e20e7bd76ac3e84562b36c5032e49a9e7f88fc5e66883af43fca8aab",
+    "src/ultimate/scrna_smoke.py": "cf53d1ec5d3af49e08c78d9d01bfc58359c1a54d40d3ad4d4f9884865f41268f",
+    "src/ultimate/modules/runner.py": "9be74ccdb544ee6893f4c793bec387e565c9404bf0b59194c93733ff62c6ab85",
+    "slurm/upstream_bulk_rnaseq_salmon.sbatch": "56fc1e0a127a67c302f61e0fd91372dc33865019639371493d801441b542160c",
+    "slurm/upstream_scrna_starsolo.sbatch": "df00380d0d332bd3eb9db3b41e2fe76cbb127087c70dd7ca4ed8b1818c493578",
+    "slurm/xielab_e2e_regression_suite.sbatch": "f3151ece587a51ccfbf4afda865ab5f9e8a581fd60c275a546b6b8efa120907a",
+    "tests/test_m6_upstream_contract.py": "40e0eacec03ed1a6415eb15a35eafa29a2e615f1050742bc9fd41e9d77d21ae0"
+  },
+  "compliance": {
+    "foodie_completely_excluded": true,
+    "no_patient_data": true,
+    "no_full_scale_run": true,
+    "no_shared_input_modified": true,
+    "no_auto_submit": true,
+    "no_push": true,
+    "delivery_allowed_expected_false": true
+  },
+  "pending_approval_manifest": {
+    "1_environment_build": {
+      "description": "Build ultimate-upstream environment using micromamba on compute_pro",
+      "command": "sbatch --account=xielab --partition=compute_pro --qos=normal slurm/xielab_setup_upstream_env.sbatch",
+      "expected_resources": "4 CPUs, 24G RAM, 4h limit"
+    },
+    "2_fixtures": {
+      "description": "Approved frozen synthetic mini-FASTQ fixtures (e.g. 1,000 reads, non-patient data)",
+      "bulk_fixture": "synthetic_bulk_1k_paired.fastq.gz",
+      "scrna_fixture": "synthetic_scrna_1k_paired.fastq.gz"
+    },
+    "3_indexes_and_whitelist": {
+      "description": "Pre-validated compatible small reference indexes (do NOT build full genome index)",
+      "salmon_index": "pre-built small transcript index under cache/indexes/salmon_mini",
+      "star_index": "pre-built small chromosome index under cache/indexes/star_mini",
+      "whitelist": "10x 3M-february-2018.txt"
+    },
+    "4_resource_limits": {
+      "bulk_limits": "--account=xielab --partition=compute_pro --qos=normal --cpus-per-task=8 --mem=32G --time=12:00:00",
+      "scrna_limits": "--account=xielab --partition=compute_pro --qos=normal --cpus-per-task=8 --mem=48G --time=12:00:00"
+    },
+    "5_planned_submissions": {
+      "bulk_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/m6_p1_bulk/config/upstream/run_upstream.sbatch",
+      "scrna_command": "sbatch --account=xielab --partition=compute_pro --qos=normal jobs/m6_p1_scrna/config/upstream/run_upstream.sbatch"
+    }
+  }
+}

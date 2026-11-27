@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import stat
 import csv
@@ -9,17 +10,22 @@ from pathlib import Path
 from typing import Any
 
 from ultimate.config import dump_yaml, load_config, resolve_path
+from ultimate.paths import project_root
 from ultimate.raw_qc import PATH_COLUMNS
 
 
 JOB_SUBDIRS = ("raw_links", "config", "samples", "runs", "logs", "deliverables", "reproducible_code", "work")
 
 
+def _shell_quote(value: str | Path) -> str:
+    return shlex.quote(str(value))
+
+
 def prepare_job(
     *,
     config_path: Path,
     job_id: str,
-    root: Path = Path("/shared/shen/2026/ultimate"),
+    root: Path | None = None,
     samplesheet: Path | None = None,
     analysis_request: Path | None = None,
     run_mode: str = "production",
@@ -27,7 +33,7 @@ def prepare_job(
     if run_mode not in {"production", "interactive"}:
         raise ValueError("run_mode must be one of: production, interactive")
     clean_job_id = _clean_job_id(job_id)
-    root = root.expanduser().resolve()
+    root = (root or project_root()).expanduser().resolve()
     job_dir = root / "jobs" / clean_job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     for name in JOB_SUBDIRS:
@@ -253,7 +259,7 @@ def _write_command_plan(path: Path, *, root: Path, job_config: Path, approval_pa
         "## Preflight",
         "",
         "```bash",
-        f"ultimate preflight --config {job_config}",
+        f"ultimate preflight --config {_shell_quote(job_config)}",
         "```",
         "",
         "## Slurm run",
@@ -261,11 +267,11 @@ def _write_command_plan(path: Path, *, root: Path, job_config: Path, approval_pa
         slurm_note,
         "",
         "```bash",
-        f"hpc-sbatch {job_slurm_script}",
+        f"sbatch {_shell_quote(job_slurm_script)}",
         "```",
         "",
-        "说明：本地 `hpc-sbatch` wrapper 只接收一个远端脚本路径；`run_ultimate.sbatch` 已固定 config 和 approval 参数。",
-        f"底层运行：`bash {slurm_wrapper} {job_config}{' ' + str(approval_path) if run_mode == 'production' else ''}`。",
+        "说明：`run_ultimate.sbatch` 已固定 config 和 approval 参数。需要指定集群账号、分区或 QOS 时，使用 `ULTIMATE_SLURM_ACCOUNT`、`ULTIMATE_SLURM_PARTITION` 和 `ULTIMATE_SLURM_QOS` 后再运行 `submit.sh`。",
+        f"底层运行：`bash {_shell_quote(slurm_wrapper)} {_shell_quote(job_config)}{' ' + _shell_quote(approval_path) if run_mode == 'production' else ''}`。",
         "",
         "",
         f"运行日志会镜像到：`{log_dir}`。",
@@ -273,7 +279,7 @@ def _write_command_plan(path: Path, *, root: Path, job_config: Path, approval_pa
         "## Rebuild delivery/repro package",
         "",
         "```bash",
-        f"ultimate export-repro --run-dir {job_config.parents[1] / 'runs' / job_config.parents[1].name}",
+        f"ultimate export-repro --run-dir {_shell_quote(job_config.parents[1] / 'runs' / job_config.parents[1].name)}",
         "```",
         "",
     ]
@@ -283,9 +289,11 @@ def _write_command_plan(path: Path, *, root: Path, job_config: Path, approval_pa
 
 def _write_submit_script(path: Path, *, root: Path, job_config: Path, approval_path: Path, run_mode: str, job_slurm_script: Path) -> Path:
     approval_check = ""
+    job_dir = job_config.parents[1]
+    run_dir = job_dir / "runs" / job_dir.name
     if run_mode == "production":
         approval_check = f'''
-python - "{approval_path}" "{job_config}" "{job_config.parents[1] / "runs" / job_config.parents[1].name}" <<'PY'
+python - {_shell_quote(approval_path)} {_shell_quote(job_config)} {_shell_quote(run_dir)} <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -312,13 +320,27 @@ PY
     content = f"""#!/usr/bin/env bash
 set -euo pipefail
 
-JOB_DIR="{job_config.parents[1]}"
+JOB_DIR={_shell_quote(job_dir)}
 LOG_DIR="$JOB_DIR/logs"
 mkdir -p "$LOG_DIR"
 SUBMIT_LOG="$LOG_DIR/slurm_submit_$(date -u +%Y%m%dT%H%M%SZ).log"
 {approval_check}
-echo "hpc-sbatch {job_slurm_script}" | tee "$SUBMIT_LOG"
-hpc-sbatch "{job_slurm_script}" | tee -a "$SUBMIT_LOG"
+SBATCH="${{ULTIMATE_SBATCH:-sbatch}}"
+SBATCH_ARGS=()
+if [[ -n "${{ULTIMATE_SLURM_ACCOUNT:-}}" ]]; then
+  SBATCH_ARGS+=(--account="${{ULTIMATE_SLURM_ACCOUNT}}")
+fi
+if [[ -n "${{ULTIMATE_SLURM_PARTITION:-}}" ]]; then
+  SBATCH_ARGS+=(--partition="${{ULTIMATE_SLURM_PARTITION}}")
+fi
+if [[ -n "${{ULTIMATE_SLURM_QOS:-}}" ]]; then
+  SBATCH_ARGS+=(--qos="${{ULTIMATE_SLURM_QOS}}")
+fi
+# `set -u` treats an empty array expansion as unbound in older bash; the
+# empty-safe array form below keeps the script runnable without SLURM overrides.
+printf '%q ' "$SBATCH" ${{SBATCH_ARGS[@]+"${{SBATCH_ARGS[@]}}"}} {_shell_quote(job_slurm_script)} | tee "$SUBMIT_LOG"
+printf '\\n' | tee -a "$SUBMIT_LOG"
+"$SBATCH" ${{SBATCH_ARGS[@]+"${{SBATCH_ARGS[@]}}"}} {_shell_quote(job_slurm_script)} | tee -a "$SUBMIT_LOG"
 """
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
@@ -326,7 +348,7 @@ hpc-sbatch "{job_slurm_script}" | tee -a "$SUBMIT_LOG"
 
 
 def _write_job_slurm_script(path: Path, *, root: Path, job_config: Path, approval_path: Path, run_mode: str) -> Path:
-    approval_arg = f' "{approval_path}"' if run_mode == "production" else ""
+    approval_arg = f" {_shell_quote(approval_path)}" if run_mode == "production" else ""
     job_id = job_config.parents[1].name
     content = f"""#!/usr/bin/env bash
 #SBATCH --job-name=ult_{job_id[:20]}
@@ -338,8 +360,8 @@ def _write_job_slurm_script(path: Path, *, root: Path, job_config: Path, approva
 
 set -euo pipefail
 
-mkdir -p "{job_config.parents[1]}/logs"
-bash "{root / 'slurm' / 'ultimate_run.sbatch'}" "{job_config}"{approval_arg}
+mkdir -p {_shell_quote(job_config.parents[1] / 'logs')}
+bash {_shell_quote(root / 'slurm' / 'ultimate_run.sbatch')} {_shell_quote(job_config)}{approval_arg}
 """
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
@@ -353,5 +375,5 @@ def _slurm_adapter_status(root: Path) -> dict[str, Any]:
         "exists": wrapper.exists(),
         "is_file": wrapper.is_file(),
         "status": "ready" if wrapper.is_file() else "missing",
-        "policy": "required before submitting formal jobs with hpc-sbatch",
+        "policy": "required before submitting formal jobs with sbatch",
     }

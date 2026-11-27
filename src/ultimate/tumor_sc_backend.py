@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ import seaborn as sns
 from ultimate.analysis_levels import classify_analysis_level
 from ultimate.backend_registry import build_backend_plan, enrich_backend_plan_for_run, write_backend_plan_table
 from ultimate.constants import MODULE_SPECS
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
+from ultimate.runtime import apply_thread_budget, thread_budget
 from ultimate.modules.common import (
     handoff_plan,
     known_limitations,
@@ -81,6 +84,7 @@ def run_tumor_sc_backend(*, config: dict[str, Any], output_dir: Path, samples: p
     warnings = [TUMOR_SC_WARNING]
     n_cells = 0
     n_malignant_candidates = 0
+    backend_execution_rows: list[dict[str, Any]] = []
     if skip_reasons:
         artifacts.update(_write_skip_outputs(tables_dir=tables_dir, figures_dir=figures_dir, objects_dir=objects_dir, analysis_fields=level_fields))
     else:
@@ -102,6 +106,17 @@ def run_tumor_sc_backend(*, config: dict[str, Any], output_dir: Path, samples: p
                     analysis_fields=level_fields,
                 )
             )
+            copykat_row, copykat_artifacts = _run_copykat_backend(
+                config=config,
+                data=data,
+                tables_dir=tables_dir,
+                figures_dir=figures_dir,
+                objects_dir=objects_dir,
+                logs_dir=logs_dir,
+                analysis_level=str(level_fields.get("analysis_level") or "smoke_backend"),
+            )
+            backend_execution_rows.append(copykat_row)
+            artifacts["tables"].update(copykat_artifacts)
             artifacts["figures"].update(_write_tumor_figures(tables_dir=tables_dir, figures_dir=figures_dir))
             artifacts["objects"].update(_write_tumor_object(objects_dir=objects_dir, data=data, input_ref=str(input_ref or "")))
             n_cells = int(data["cells"].shape[0])
@@ -136,6 +151,8 @@ def run_tumor_sc_backend(*, config: dict[str, Any], output_dir: Path, samples: p
         "n_cells": n_cells,
         "n_malignant_candidates": n_malignant_candidates,
         "artifacts": artifacts,
+        "backend_execution_rows": backend_execution_rows,
+        "copykat_status": next((r.get("status") for r in backend_execution_rows if r.get("backend_id") == COPYKAT_BACKEND_ID), "not_requested"),
         "warnings": warnings,
         "limitations": list(known_limitations(module_name)),
         "handoff": handoff_plan(module_name),
@@ -543,7 +560,7 @@ def _write_tumor_figures(*, tables_dir: Path, figures_dir: Path) -> dict[str, st
 
 
 def _write_tumor_object(*, objects_dir: Path, data: dict[str, Any], input_ref: str) -> dict[str, str]:
-    path = objects_dir / "tumor_sc_mvp_object.rds"
+    path = objects_dir / "tumor_sc_mvp_object.json"
     payload = {
         "object_type": "tumor_sc_summary_mvp",
         "input_ref": input_ref,
@@ -571,7 +588,7 @@ def _write_skip_outputs(*, tables_dir: Path, figures_dir: Path, objects_dir: Pat
         path = tables_dir / f"{key}.tsv"
         pd.DataFrame(columns=columns).to_csv(path, sep="\t", index=False)
         tables[key] = str(path)
-    object_path = objects_dir / "tumor_sc_mvp_object.rds"
+    object_path = objects_dir / "tumor_sc_mvp_object.json"
     object_path.write_text(json.dumps({"status": "skipped", **analysis_fields}, indent=2), encoding="utf-8")
     fig, ax = plt.subplots(figsize=(5.0, 3.2))
     ax.text(0.5, 0.5, "tumor_sc backend skipped", ha="center", va="center")
@@ -587,3 +604,140 @@ def _read_table(path: Path | None) -> pd.DataFrame:
         return pd.DataFrame()
     sep = "," if path.suffix.lower() == ".csv" else "\t"
     return pd.read_csv(path, sep=sep)
+
+
+
+COPYKAT_BACKEND_ID = "scrna.tumor.copykat"
+COPYKAT_WARNING = "CopyKAT 拷贝数推断基于表达矩阵的结构性 CNV 信号，属于计算推断证据，不能替代 FISH/病理等实验确认。"
+
+
+def _copykat_enabled(config: dict[str, Any], module_cfg: dict[str, Any]) -> bool:
+    """CopyKAT only runs when the operator explicitly opts in."""
+    if module_cfg.get("run_copykat") is True:
+        return True
+    backend_sel = module_cfg.get("backend")
+    if isinstance(backend_sel, str) and backend_sel == COPYKAT_BACKEND_ID:
+        return True
+    if isinstance(backend_sel, list) and COPYKAT_BACKEND_ID in backend_sel:
+        return True
+    backends = module_cfg.get("backends")
+    if isinstance(backends, dict) and backends.get(COPYKAT_BACKEND_ID) is True:
+        return True
+    if isinstance(backends, list) and COPYKAT_BACKEND_ID in backends:
+        return True
+    return False
+
+
+def _integer_count_gate(matrix: pd.DataFrame) -> tuple[bool, str]:
+    """Reject log/normalized/small-fraction matrices; CopyKAT needs raw counts."""
+    if matrix is None or matrix.empty:
+        return False, "empty_count_matrix"
+    values = matrix.to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        return False, "non_finite_values_in_count_matrix"
+    if (values < 0).any():
+        return False, "negative_values_not_raw_counts"
+    if not np.allclose(values, np.round(values), atol=1e-8):
+        return False, "non_integer_values:log_or_normalized_matrix"
+    if float(values.sum()) == 0.0:
+        return False, "zero_total_counts"
+    return True, ""
+
+
+def _run_copykat_backend(
+    *,
+    config: dict[str, Any],
+    data: dict[str, Any],
+    tables_dir: Path,
+    figures_dir: Path,
+    objects_dir: Path,
+    logs_dir: Path,
+    analysis_level: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    module_cfg = _module_cfg(config)
+    for directory in (tables_dir, figures_dir, objects_dir, logs_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    status_path = tables_dir / "copykat_backend_status.tsv"
+    artifacts = {"copykat_backend_status": str(status_path)}
+    if not _copykat_enabled(config, module_cfg):
+        return _copykat_row("skipped", "copykat_not_enabled"), artifacts
+
+    matrix = data.get("matrix") if isinstance(data, dict) else None
+    ok, gate_reason = _integer_count_gate(matrix if isinstance(matrix, pd.DataFrame) else pd.DataFrame())
+    if not ok:
+        _write_copykat_status(status_path, "blocked", gate_reason, analysis_level)
+        return _copykat_row("blocked", gate_reason), artifacts
+
+    rscript = resolve_rscript("tumor_sc")
+    if rscript is None:
+        _write_copykat_status(status_path, "skipped", "dependency_missing:Rscript", analysis_level)
+        return _copykat_row("skipped", "dependency_missing:Rscript"), artifacts
+
+    probe = subprocess.run(
+        [str(rscript), "-e", 'if(!requireNamespace("copykat", quietly=TRUE)) quit(status=2)'],
+        check=False, capture_output=True, text=True, timeout=120,
+    )
+    if probe.returncode != 0:
+        _write_copykat_status(status_path, "skipped", "dependency_missing:copykat", analysis_level)
+        return _copykat_row("skipped", "dependency_missing:copykat"), artifacts
+
+    script = resolve_packaged_asset("scripts", "R", "tumor_cnv_copykat.R")
+    counts_path = tables_dir / "copykat_input_counts.tsv"
+    with_counts = matrix.copy()
+    with_counts.index = with_counts.index.astype(str)
+    with_counts.columns = with_counts.columns.astype(str)
+    with_counts.insert(0, "gene", with_counts.index)
+    with_counts.to_csv(counts_path, sep="\t", index=False)
+    out_dir = tables_dir / "copykat"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ncores = thread_budget(config).threads
+    command = [
+        str(rscript), str(script),
+        "--counts", str(counts_path),
+        "--output-dir", str(out_dir),
+        "--sample-name", "ultimate_tumor_sc",
+        "--ncores", str(ncores),
+    ]
+    try:
+        with apply_thread_budget(thread_budget(config)):
+            completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=3600)
+        (logs_dir / "copykat_backend.log").write_text(
+            "COMMAND\t" + " ".join(command) + "\n\nSTDOUT\n" + completed.stdout + "\n\nSTDERR\n" + completed.stderr,
+            encoding="utf-8",
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        _write_copykat_status(status_path, "failed", f"copykat_failed:{type(exc).__name__}", analysis_level)
+        return _copykat_row("failed", f"copykat_failed:{type(exc).__name__}"), artifacts
+
+    _write_copykat_status(status_path, "ready", "", analysis_level, ncores=ncores)
+    for name in ("copykat_predictions.tsv", "copykat_cna_preview.tsv"):
+        if (out_dir / name).exists():
+            artifacts[name.replace(".tsv", "")] = str(out_dir / name)
+    return _copykat_row("ready", ""), artifacts
+
+
+def _copykat_row(status: str, reason: str) -> dict[str, Any]:
+    return {
+        "backend_id": COPYKAT_BACKEND_ID,
+        "status": status,
+        "analysis_level": "smoke_backend",
+        "delivery_allowed": False,
+        "validation_evidence_allowed": False,
+        "reason": reason,
+        "skip_reason": reason,
+        "interpretation_warning": COPYKAT_WARNING,
+    }
+
+
+def _write_copykat_status(path: Path, status: str, reason: str, analysis_level: str, *, ncores: int | None = None) -> None:
+    pd.DataFrame(
+        [{
+            "backend_id": COPYKAT_BACKEND_ID,
+            "status": status,
+            "reason": reason,
+            "analysis_level": analysis_level,
+            "ncores": ncores if ncores is not None else "",
+            "method_boundary": COPYKAT_WARNING,
+            "delivery_allowed": False,
+        }]
+    ).to_csv(path, sep="\t", index=False)

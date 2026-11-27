@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -30,7 +31,7 @@ DEFAULT_DESIGN_URL = "https://raw.githubusercontent.com/MonashBioinformaticsPlat
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate the proteomics abundance-table MVP on a public MaxQuant proteinGroups table.")
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--public-data-dir", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/proteomics_lfq_analyst"))
+    parser.add_argument("--public-data-dir", type=Path, default=Path(str(project_root() / 'public_data/proteomics_lfq_analyst')))
     parser.add_argument("--protein-groups", type=Path, default=None)
     parser.add_argument("--design-table", type=Path, default=None)
     parser.add_argument("--protein-groups-url", default=DEFAULT_PROTEINGROUPS_URL)
@@ -283,7 +284,7 @@ def _write_project_config(*, output_dir: Path, prepared: dict[str, Any]) -> Path
             "name": "slurm_proteomics_lfq_analyst_public",
             "organism": "human",
             "output_dir": str(output_dir),
-            "server_root": "/shared/shen/2026/ultimate",
+            "server_root": str(project_root()),
             "run_mode": "validation",
             "job_id": "slurm_proteomics_lfq_analyst_public",
             "is_demo": False,

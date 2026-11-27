@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from _portable_paths import project_root
 
 import argparse
 import json
@@ -20,8 +21,7 @@ from scipy import sparse
 
 
 DEFAULT_H5 = Path(
-    "/shared/shen/2026/ultimate/public_data/multiome/"
-    "10k_PBMC_Multiome_nextgem_Chromium_Controller_filtered_feature_bc_matrix.h5"
+    str(project_root() / 'public_data/multiome/10k_PBMC_Multiome_nextgem_Chromium_Controller_filtered_feature_bc_matrix.h5')
 )
 
 
@@ -29,7 +29,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Validate a public 10x Multiome RNA+ATAC feature matrix.")
     parser.add_argument("--input-h5", type=Path, default=DEFAULT_H5)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--public-data-dir", type=Path, default=Path("/shared/shen/2026/ultimate/public_data/multiome"))
+    parser.add_argument("--public-data-dir", type=Path, default=Path(str(project_root() / 'public_data/multiome')))
     parser.add_argument("--max-cells-object", type=int, default=3000)
     parser.add_argument("--max-features-object", type=int, default=2500)
     args = parser.parse_args()
