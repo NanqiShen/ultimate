@@ -110,24 +110,39 @@ while IFS=$'\t' read -r sample r1 r2 strandedness _condition; do
 done < <(tail -n +2 "$OUT_DIR/tables/samples_parsed.tsv")
 
 python3 - "$OUT_DIR" <<'PY'
+import csv
+import json
 import sys
 from pathlib import Path
-import pandas as pd
 
 out_dir = Path(sys.argv[1])
 quant_list = out_dir / "tables" / "quant_files.txt"
-frames = []
+samples: list[str] = []
+feature_order: list[str] = []
+feature_seen: set[str] = set()
+counts_by_sample: dict[str, dict[str, int]] = {}
 for line in quant_list.read_text(encoding="utf-8").splitlines():
     if not line.strip():
         continue
     sample, path = line.split("\t")
-    frame = pd.read_csv(path, sep="\t")[["Name", "NumReads"]].rename(columns={"NumReads": sample})
-    frames.append(frame.set_index("Name"))
-if not frames:
+    samples.append(sample)
+    sample_counts: dict[str, int] = {}
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            name = row["Name"]
+            if name not in feature_seen:
+                feature_seen.add(name)
+                feature_order.append(name)
+            sample_counts[name] = int(round(float(row["NumReads"])))
+    counts_by_sample[sample] = sample_counts
+if not samples:
     raise SystemExit("no salmon quant.sf produced")
-matrix = pd.concat(frames, axis=1).fillna(0.0)
-matrix.index.name = "feature_id"
-matrix.round().astype("int64").to_csv(out_dir / "counts_raw.tsv", sep="\t")
+with open(out_dir / "counts_raw.tsv", "w", encoding="utf-8", newline="") as handle:
+    writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+    writer.writerow(["feature_id", *samples])
+    for feat in feature_order:
+        writer.writerow([feat, *[counts_by_sample[s].get(feat, 0) for s in samples]])
 (out_dir / "import_config.yaml").write_text(
     "module: rnaseq\n"
     "input_matrix: " + str(out_dir / "counts_raw.tsv") + "\n"
@@ -136,19 +151,18 @@ matrix.round().astype("int64").to_csv(out_dir / "counts_raw.tsv", sep="\t")
     "notes: salmon transcript-level NumReads rounded to integers; map to gene level before formal DE.\n",
     encoding="utf-8",
 )
-import json
 (out_dir / "raw_qc_manifest.json").write_text(
     json.dumps({
         "status": "ready",
         "route": "fastp_salmon",
-        "n_samples": int(matrix.shape[1]),
-        "n_features": int(matrix.shape[0]),
+        "n_samples": len(samples),
+        "n_features": len(feature_order),
         "counts_matrix": str(out_dir / "counts_raw.tsv"),
         "threads": "see SLURM_CPUS_PER_TASK in logs",
     }, indent=2),
     encoding="utf-8",
 )
-print(f"[upstream_bulk] wrote counts_raw.tsv {matrix.shape}")
+print(f"[upstream_bulk] wrote counts_raw.tsv ({len(feature_order)}, {len(samples)})")
 PY
 
 echo "[upstream_bulk] done: $OUT_DIR/counts_raw.tsv"

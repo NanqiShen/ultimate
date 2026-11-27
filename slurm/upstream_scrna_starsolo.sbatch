@@ -86,7 +86,7 @@ if [[ -z "$WL" || ! -r "$WL" ]]; then
 fi
 
 : > "$OUT_DIR/tables/import_configs.txt"
-while IFS=$'\t' read -r sample r1 r2 _strandedness; do
+while IFS=$'\t' read -r sample r1 r2 _strandedness _condition; do
   [[ -z "$sample" ]] && continue
   case "$r1" in /*) fq1="$r1" ;; *) fq1="$FASTQ_DIR/$r1" ;; esac
   if [[ ! -r "$fq1" ]]; then
@@ -95,24 +95,43 @@ while IFS=$'\t' read -r sample r1 r2 _strandedness; do
   fi
   case "$r2" in
     /*) fq2="$r2" ;;
-    "") fq2="" ;;
+    ""|-) fq2="" ;;
     *) fq2="$FASTQ_DIR/$r2" ;;
   esac
-  if [[ -n "$fq2" && ! -r "$fq2" ]]; then
-    echo "[upstream_scrna] R2 not readable: $fq2" >&2
+  if [[ -z "$fq2" || ! -r "$fq2" ]]; then
+    echo "[upstream_scrna] R2 (cDNA read) required and not readable for STARsolo: ${fq2:-<empty>}" >&2
     exit 2
   fi
   sample_out="$OUT_DIR/star/${sample}"
   mkdir -p "$sample_out"
-  reads=("$fq1")
-  [[ -n "$fq2" ]] && reads+=("$fq2")
-  echo "[upstream_scrna] STARsolo $sample"
+  # STARsolo CB_UMI_Simple expects --readFilesIn <cDNA_R2> <CB_UMI_R1> (mate 2 holds CB+UMI).
+  reads=("$fq2" "$fq1")
+  umi_len="${SOLO_UMI_LEN:-}"
+  if [[ -z "$umi_len" ]]; then
+    umi_len=$(python3 - "$fq1" <<'PY'
+import gzip, sys
+p = sys.argv[1]
+opener = gzip.open if p.endswith(".gz") else open
+with opener(p, "rt", encoding="utf-8", errors="ignore") as h:
+    h.readline()
+    seq = h.readline().strip()
+print(12 if len(seq) >= 28 else 10)
+PY
+)
+  fi
+  read_cmd=()
+  if [[ "$fq1" == *.gz ]]; then
+    read_cmd=(--readFilesCommand zcat)
+  fi
+  echo "[upstream_scrna] STARsolo $sample (umi_len=$umi_len)"
   STAR --runThreadN "$THREADS" \
        --genomeDir "$INDEX" \
        --readFilesIn "${reads[@]}" \
-       --readFilesCommand zcat \
+       "${read_cmd[@]}" \
        --soloType CB_UMI_Simple \
        --soloCBwhitelist "$WL" \
+       --soloUMIlen "$umi_len" \
+       --soloBarcodeReadLength 0 \
        --soloFeatures Gene \
        --soloCellFilter EmptyDrops_CR \
        --outSAMtype None \

@@ -881,3 +881,87 @@ def test_rendered_salmon_sbatch_runs_with_stubs_skips_header_and_handles_pe_and_
     manifest = json.loads((upstream_out / "raw_qc_manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "ready"
     assert manifest["n_samples"] == 2
+
+
+def test_rendered_starsolo_sbatch_runs_with_stubs_passes_cdna_then_cb_read(tmp_path: Path):
+    import os
+    import subprocess
+    import sys
+
+    fastq_dir = tmp_path / "fastq"
+    fastq_dir.mkdir()
+    with gzip.open(fastq_dir / "S1_R1.fastq.gz", "wt", encoding="utf-8") as h:
+        h.write("@r1\nAAACCCAAGAAACACT" + "ACGTACGTACGT" + "\n+\n" + "I" * 28 + "\n")
+    with gzip.open(fastq_dir / "S1_R2.fastq.gz", "wt", encoding="utf-8") as h:
+        h.write("@r1\n" + ("ACGT" * 20) + "\n+\n" + "I" * 80 + "\n")
+
+    raw_sheet = tmp_path / "samplesheet.tsv"
+    raw_sheet.write_text(
+        "sample_id\tcondition\tfastq_1\tfastq_2\n"
+        f"S1\tctrl\t{fastq_dir / 'S1_R1.fastq.gz'}\t{fastq_dir / 'S1_R2.fastq.gz'}\n",
+        encoding="utf-8",
+    )
+
+    index_dir = tmp_path / "star_idx"
+    index_dir.mkdir()
+    (index_dir / "SAindex").write_text("x", encoding="utf-8")
+    (index_dir / "Genome").write_text("x", encoding="utf-8")
+
+    pkg_dir = tmp_path / "pkg"
+    res = prepare_upstream_package(
+        route="starsolo",
+        samplesheet=raw_sheet,
+        output_dir=pkg_dir,
+        index=index_dir,
+    )
+    assert res.status == "ready", res.blocked_reason
+    rendered = Path(res.artifacts["run_upstream_sbatch"])
+
+    upstream_env = tmp_path / "upstream_env"
+    bin_dir = upstream_env / "bin"
+    bin_dir.mkdir(parents=True)
+    wl_dir = upstream_env / "share" / "star"
+    wl_dir.mkdir(parents=True)
+    (wl_dir / "3M-february-2018.txt").write_text("AAACCCAAGAAACACT\n", encoding="utf-8")
+    (bin_dir / "python3").symlink_to(sys.executable)
+
+    star_log = tmp_path / "star_invocations.txt"
+    star_stub = bin_dir / "STAR"
+    star_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"printf '%s\\n' \"$*\" >> {str(star_log)!r}\n"
+        "prefix=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  case \"$1\" in\n"
+        "    --outFileNamePrefix) prefix=\"$2\"; shift 2 ;;\n"
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        "mkdir -p \"${prefix}Solo.out/Gene/filtered\"\n"
+        "printf '%%%%MatrixMarket matrix coordinate integer general\\n1 1 1\\n1 1 5\\n' > \"${prefix}Solo.out/Gene/filtered/matrix.mtx\"\n"
+        "printf 'AAACCCAAGAAACACT\\n' > \"${prefix}Solo.out/Gene/filtered/barcodes.tsv\"\n"
+        "printf 'G1\\tG1\\tGene Expression\\n' > \"${prefix}Solo.out/Gene/filtered/features.tsv\"\n",
+        encoding="utf-8",
+    )
+    star_stub.chmod(0o755)
+
+    env = dict(os.environ)
+    env["ULTIMATE_UPSTREAM_ENV"] = str(upstream_env)
+    proc = subprocess.run(["bash", str(rendered)], env=env, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+    calls = star_log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 1
+    assert "--readFilesIn " in calls[0]
+    after = calls[0].split("--readFilesIn ")[1].split(" --")[0].split()
+    assert after[0].endswith("S1_R2.fastq.gz")
+    assert after[1].endswith("S1_R1.fastq.gz")
+    assert "--soloUMIlen 12" in calls[0]
+    assert "--soloBarcodeReadLength 0" in calls[0]
+
+    upstream_out = pkg_dir / ARTIFACTS_SUBDIR
+    assert (upstream_out / "star" / "S1" / "filtered" / "matrix.mtx.gz").is_file()
+    manifest = json.loads((upstream_out / "raw_qc_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "ready"
+    assert manifest["n_samples"] == 1

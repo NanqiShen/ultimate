@@ -21,11 +21,10 @@ dependencies:
   - pynndescent
   - scrublet
   - celltypist
-  - decoupler>=2.1.6
+  - decoupler-py>=2.1
   - harmonypy
   - bbknn
   - gseapy
   - muon
   - squidpy
-  - pip:
-      - liana>=1.7.3
+  - liana>=1.7.3,<2.0
