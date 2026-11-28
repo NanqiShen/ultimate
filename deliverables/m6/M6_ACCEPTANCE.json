@@ -233,13 +233,13 @@
     "src/ultimate/cli.py": "70ae4da08c445c2401fd5d847b3b772481d254d2fc2a24f3b2579723f201c574",
     "src/ultimate/upstream_acceptance.py": "92e773a356c1c9654bd76e001deaf94986e5814874c23f4d87d3b7ff27312a52",
     "src/ultimate/prepare_upstream.py": "9bc8f0040a23baff8fa9297fd60f856c11724419adeac3b904cf332145171582",
-    "src/ultimate/bulk.py": "cd57ccbf749445ac973284f794b9c1b0051dc1077876f217357f921cc1aa9eae",
+    "src/ultimate/bulk.py": "22a314a78147379192e7580eede514c82f8bd8531b29b5cf0b2025fc414aa47a",
     "src/ultimate/pipeline.py": "0b0c1ec6e20e7bd76ac3e84562b36c5032e49a9e7f88fc5e66883af43fca8aab",
     "src/ultimate/scrna_smoke.py": "cf53d1ec5d3af49e08c78d9d01bfc58359c1a54d40d3ad4d4f9884865f41268f",
     "src/ultimate/modules/runner.py": "9be74ccdb544ee6893f4c793bec387e565c9404bf0b59194c93733ff62c6ab85",
     "slurm/upstream_bulk_rnaseq_salmon.sbatch": "791e4f5e4739e4285c14214eb04cea638296a52df20b1051c8e27a807d4634ee",
     "slurm/upstream_scrna_starsolo.sbatch": "2fd9b6706bfee9ff572ed57497dfc0720d6f3681d5cff1acb5a7cfcf30a19ad2",
-    "slurm/xielab_e2e_regression_suite.sbatch": "fac9bf254eaf61a72cfdba3abcf6ae537b511d838f460b280780259ba06d9516",
+    "slurm/xielab_e2e_regression_suite.sbatch": "39fc87649ae1a24dd09390bc3d2485a8bbf08e91e2be3e4c262f25b937b867d2",
     "tests/test_m6_upstream_contract.py": "c479e3a1d42f8f7f5d0546795553263bec115eca97f8a5a10a83e27a61cf8588"
   },
   "compliance": {

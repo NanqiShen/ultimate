@@ -217,6 +217,11 @@ def load_samples(config: dict[str, Any]) -> pd.DataFrame:
         return pd.DataFrame(samples["items"])
     if isinstance(samples, list):
         return pd.DataFrame(samples)
+    for module_name in enabled_modules(config):
+        module_cfg = (config.get("modules") or {}).get(module_name) or {}
+        sheet = module_cfg.get("samplesheet")
+        if sheet and Path(str(sheet)).exists():
+            return pd.read_csv(sheet, sep=None, engine="python")
     return pd.DataFrame()
 
 

@@ -1063,6 +1063,7 @@ objects.mkdir(parents=True, exist_ok=True)
     fake_rscript.chmod(0o755)
     import os
 
+    monkeypatch.setenv("ULTIMATE_R_ENV_SCRNA", str(fake_rscript))
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
 
     row, artifacts = scrna_smoke._run_pseudobulk_de_backend(tables=tables, analysis_level="validated_backend")

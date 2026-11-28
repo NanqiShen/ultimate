@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import glob
 import importlib.util
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from ultimate.env_router import resolve_packaged_asset, resolve_rscript
 from ultimate.plot_style import apply_clinical_journal_style, save_figure
 
 ENRICHMENT_BACKEND_ID = "enrichment.gsea_ora_local"
@@ -112,7 +115,20 @@ def _ranked_genes(de_table: pd.DataFrame, *, min_genes: int = MIN_RANKED_GENES) 
     if feature_column is None:
         return pd.Series(dtype=float)
     score_column = next(
-        (col for col in ("log2FC", "log2_abundance_delta", "m_value_delta", "statistic", "score", "logfoldchanges") if col in de_table.columns),
+        (
+            col
+            for col in (
+                "log2FoldChange",
+                "log2FC",
+                "log2_abundance_delta",
+                "m_value_delta",
+                "stat",
+                "statistic",
+                "score",
+                "logfoldchanges",
+            )
+            if col in de_table.columns
+        ),
         None,
     )
     if score_column is None:
@@ -155,6 +171,127 @@ def _skip(
     return {"status": "skipped", "reason": reason, "artifacts": artifacts}
 
 
+def _finalize_enrichment_result(
+    *,
+    result: pd.DataFrame,
+    analysis_level: str,
+    gmt_paths: list[Path],
+    tables_dir: Path,
+    status_path: Path,
+    dotplot_path: Path,
+    artifacts: dict[str, str],
+    n_gene_sets: int,
+    n_ranked_genes: int,
+    engine: str,
+    prerank_obj: Any = None,
+    curve_path: Path | None = None,
+) -> dict[str, Any]:
+    out = result.copy()
+    if "backend_id" not in out.columns:
+        out.insert(0, "backend_id", ENRICHMENT_BACKEND_ID)
+    out["analysis_level"] = analysis_level
+    out["gene_set_source"] = ";".join(str(path) for path in gmt_paths)
+    result_path = tables_dir / "enrichment_results.tsv"
+    out.to_csv(result_path, sep="\t", index=False)
+    artifacts["enrichment_results"] = str(result_path)
+    _write_status(
+        status_path,
+        "ready",
+        "",
+        analysis_level,
+        n_gene_sets=n_gene_sets,
+        n_ranked_genes=n_ranked_genes,
+        engine=engine,
+    )
+    _plot_dotplot(out, dotplot_path)
+    if prerank_obj is not None and curve_path is not None:
+        _plot_gsea_curve(prerank_obj, curve_path)
+    return {
+        "status": "ready",
+        "reason": "",
+        "engine": engine,
+        "artifacts": artifacts,
+        "n_gene_sets": n_gene_sets,
+        "n_ranked_genes": n_ranked_genes,
+    }
+
+
+def _run_r_fgsea_enrichment(
+    *,
+    module_name: str,
+    ranked: pd.Series,
+    gene_sets: dict[str, list[str]],
+    gmt_paths: list[Path],
+    tables_dir: Path,
+    status_path: Path,
+    dotplot_path: Path,
+    artifacts: dict[str, str],
+    analysis_level: str,
+) -> dict[str, Any]:
+    rscript = resolve_rscript(module_name)
+    if rscript is None:
+        return _skip(
+            tables_dir=tables_dir, status_path=status_path,
+            reason="dependency_missing:gseapy", analysis_level=analysis_level, artifacts=artifacts,
+        )
+    try:
+        script_path = resolve_packaged_asset("scripts", "R", "enrichment_fgsea_backend.R")
+    except FileNotFoundError:
+        return _skip(
+            tables_dir=tables_dir, status_path=status_path,
+            reason="dependency_missing:gseapy", analysis_level=analysis_level, artifacts=artifacts,
+        )
+    probe = subprocess.run(
+        [str(rscript), "-e", 'if(!requireNamespace("fgsea", quietly=TRUE)) quit(status=2)'],
+        check=False, capture_output=True, text=True, timeout=120,
+    )
+    if probe.returncode != 0:
+        return _skip(
+            tables_dir=tables_dir, status_path=status_path,
+            reason="dependency_missing:gseapy", analysis_level=analysis_level, artifacts=artifacts,
+        )
+    with tempfile.TemporaryDirectory(prefix="ultimate_fgsea_") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        ranked_tsv = tmp_root / "ranked.tsv"
+        merged_gmt = tmp_root / "gene_sets.gmt"
+        fgsea_out = tmp_root / "fgsea_results.tsv"
+        pd.DataFrame({"feature_id": ranked.index.astype(str), "score": ranked.to_numpy()}).to_csv(
+            ranked_tsv, sep="\t", index=False
+        )
+        gmt_lines = [f"{name}\tlocal\t" + "\t".join(genes) for name, genes in gene_sets.items() if genes]
+        merged_gmt.write_text("\n".join(gmt_lines) + "\n", encoding="utf-8")
+        try:
+            subprocess.run(
+                [
+                    str(rscript),
+                    str(script_path),
+                    "--ranked", str(ranked_tsv),
+                    "--gmt", str(merged_gmt),
+                    "--output", str(fgsea_out),
+                    "--seed", "123",
+                ],
+                check=True, capture_output=True, text=True, timeout=600,
+            )
+            result = pd.read_csv(fgsea_out, sep="\t")
+        except Exception as exc:
+            return _skip(
+                tables_dir=tables_dir, status_path=status_path,
+                reason=f"enrichment_failed:{type(exc).__name__}", analysis_level=analysis_level, artifacts=artifacts,
+            )
+    return _finalize_enrichment_result(
+        result=result,
+        analysis_level=analysis_level,
+        gmt_paths=gmt_paths,
+        tables_dir=tables_dir,
+        status_path=status_path,
+        dotplot_path=dotplot_path,
+        artifacts=artifacts,
+        n_gene_sets=len(gene_sets),
+        n_ranked_genes=len(ranked),
+        engine="fgsea",
+    )
+
+
 def run_enrichment(
     *,
     de_table: pd.DataFrame,
@@ -164,7 +301,7 @@ def run_enrichment(
     analysis_level: str = "smoke_backend",
     threads: int | None = None,
 ) -> dict[str, Any]:
-    """Run local GSEA prerank (preferred) or ORA over a DE table."""
+    """Run local GSEA prerank (preferred Python gseapy or R fgsea) over a DE table."""
     tables_dir = output_dir / "results" / "tables" / module_name
     figures_dir = output_dir / "results" / "figures" / module_name
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -207,10 +344,18 @@ def run_enrichment(
             analysis_level=analysis_level, artifacts=artifacts,
         )
     if not _module_available("gseapy"):
-        return _skip(
-            tables_dir=tables_dir, status_path=status_path,
-            reason="dependency_missing:gseapy", analysis_level=analysis_level, artifacts=artifacts,
-        )
+        with _thread_budget(config, threads):
+            return _run_r_fgsea_enrichment(
+                module_name=module_name,
+                ranked=ranked,
+                gene_sets=gene_sets,
+                gmt_paths=gmt_paths,
+                tables_dir=tables_dir,
+                status_path=status_path,
+                dotplot_path=dotplot_path,
+                artifacts=artifacts,
+                analysis_level=analysis_level,
+            )
 
     import gseapy as gp
 
@@ -234,23 +379,20 @@ def run_enrichment(
             reason=f"enrichment_failed:{type(exc).__name__}", analysis_level=analysis_level, artifacts=artifacts,
         )
 
-    result = prerank.res2d.copy()
-    result.insert(0, "backend_id", ENRICHMENT_BACKEND_ID)
-    result["analysis_level"] = analysis_level
-    result["gene_set_source"] = ";".join(str(path) for path in gmt_paths)
-    result_path = tables_dir / "enrichment_results.tsv"
-    result.to_csv(result_path, sep="\t", index=False)
-    artifacts["enrichment_results"] = str(result_path)
-    _write_status(status_path, "ready", "", analysis_level, n_gene_sets=len(gene_sets), n_ranked_genes=len(ranked))
-    _plot_dotplot(result, dotplot_path)
-    _plot_gsea_curve(prerank, curve_path)
-    return {
-        "status": "ready",
-        "reason": "",
-        "artifacts": artifacts,
-        "n_gene_sets": len(gene_sets),
-        "n_ranked_genes": len(ranked),
-    }
+    return _finalize_enrichment_result(
+        result=prerank.res2d,
+        analysis_level=analysis_level,
+        gmt_paths=gmt_paths,
+        tables_dir=tables_dir,
+        status_path=status_path,
+        dotplot_path=dotplot_path,
+        artifacts=artifacts,
+        n_gene_sets=len(gene_sets),
+        n_ranked_genes=len(ranked),
+        engine="gseapy",
+        prerank_obj=prerank,
+        curve_path=curve_path,
+    )
 
 
 class _thread_budget:

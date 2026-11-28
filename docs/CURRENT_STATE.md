@@ -68,13 +68,15 @@
   `compute_pro` 上自建 fastp/salmon/STAR 工具链；`slurm/xielab_e2e_regression_suite.sbatch`
   串联 doctor → bulk → scRNA → 蛋白/生存 → validation-index/audit-production 并输出中文
   `xielab_e2e_report.md`。部署细节见 `docs/XIELAB_OPERATIONS.md`。
-- **M6 集群端到端上游实测验收（M6-P0 + M6-P1 `PASS`）**：
+- **M6 集群端到端上游与全栈闭环验收（M6-P0 + M6-P1 + 全栈闭环 `PASS`）**：
   - P0：`expected_import_project.yaml` 与 `run_manifest.json` 公共 CLI 闭环及多样本独立校验、三元组 SHA-256 绑定与 4 类反例回归全部通过；
-  - P1：在 `xielab compute_pro` 完成 Bulk Salmon（`213488` → `213490`，80 特征 × 4 样本）与 scRNA STARsolo（`213489` → `213491`，`SC_S1` 80×125 与 `SC_S2` 80×40）全链路实跑，并由 `ultimate check-upstream-acceptance` 输出 `status=pass`，结果记录于 `deliverables/m6/M6_ACCEPTANCE.json`。
+  - P1：在 `xielab compute_pro` 完成 Bulk Salmon（`213488` → `213490`，80 特征 × 4 样本）与 scRNA STARsolo（`213489` → `213491`，`SC_S1` 80×125 与 `SC_S2` 80×40）全链路实跑，并由 `ultimate check-upstream-acceptance` 输出 `status=pass`，结果记录于 `deliverables/m6/M6_ACCEPTANCE.json`；
+  - **集群真环境 `pytest` 全量验证（`213751`，`node66`，耗时 `00:25:16`，退出码 `0:0`）**：`ultimate-core` + `ultimate-bio-r` **`629 passed, 25 skipped, 0 failed`**；`ultimate-scrna` + `pseudobulk-edger`（`SingleCellExperiment`/`edgeR`/`scanpy`/`anndata`/`h5py`）**`86 passed, 0 skipped, 0 failed`**。
+  - **5 阶段公开基准 E2E 闭环实跑（`213750`，`node65`，耗时 `00:03:35`，退出码 `0:0`）**：在 `${ULTIMATE_RUNTIME_ROOT}/cache/public_data/` 就绪非患者公开基准集（`rnaseq_airway` 17,108 基因×8、`h.all.v7.5.1.symbols.gmt`、`kang18_8vs8.h5ad` 29,065 细胞 + `Immune_All_Low.pkl`、`UbiLength` 蛋白组 1,784×6、`survival::lung` 228 例），运行 `slurm/xielab_e2e_regression_suite.sbatch` 产出 `validations/xielab_e2e_20261128T093447Z/xielab_e2e_report.md`：**`ready=17, skipped=0, blocked=0, failed=0`**（真 R `DESeq2` + 离线 R `fgsea`、`CellTypist` + `paired_edgeR`、真 R `limma::lmFit+eBayes (R)`、真 `survival`、`report.html`、`validation-index`、`audit-production` 全通）。
+  - 闭环修复（已合入主线并复测通过）：`bulk.py` 修复蛋白组 `limma` 结果列名映射（`feature_id`/`log2FC` → `protein_id`/`log2_abundance_delta`）并将局部 GMT 富集移至形式化 DE 后端之后执行；新增 `scripts/R/enrichment_fgsea_backend.R` 并更新 `enrichment_backend.py` 支持无 `gseapy` 时离线调用 R `fgsea` 与识别 `DESeq2` `log2FoldChange`/`stat`；`config.py:load_samples` 支持回落读取已启用模块的 `samplesheet`；修正单测假 `Rscript` 在有 `ULTIMATE_ENV_ROOT` 时的环境隔离。
 
 ## 下一推进点
 
-- 收口验证：在 `xielab compute_pro` 上以真实四环境栈执行全量 `pytest`（覆盖 R/scanpy 真后端）与 `slurm/xielab_e2e_regression_suite.sbatch` 公开基准回归。
-- 下一优先级：CopyKAT 已具备 raw-count 门禁、R 脚本与 `--ncores` 线程绑定（M4），但仍**未在集群实跑**；下一步是在 `xielab` 上以显式开关 + 小抽样完成首次真实执行，再扩展到 inferCNV，并按需补齐 Salmon `tximport` 转录本→基因汇总链路。
+- 上一优先级 **M1–M6 及集群真环境闭环已全部完成**；下一优先级为在 `xielab compute_pro` 上以显式开关 + 小抽样完成 `CopyKAT` 首次真实执行，再扩展到 `inferCNV`，并按需补齐 Salmon `tximport` 转录本→基因汇总链路。
 - 备选方向：scATAC/Multiome fragments-level 验证、CellChat/NicheNet 通讯专项、clinical association/survival 模板。
 - 真实或较重计算继续通过 Slurm 提交，不在登录节点运行。
