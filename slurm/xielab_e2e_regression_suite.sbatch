@@ -40,6 +40,7 @@ ENV_ROOT="${ULTIMATE_ENV_ROOT:-$RUNTIME_ROOT/envs}"
 CORE_ENV="${ULTIMATE_CORE_ENV:-$ENV_ROOT/ultimate-core}"
 BIO_R_ENV="${ULTIMATE_BIO_R_ENV:-$ENV_ROOT/ultimate-bio-r}"
 SCRN_ENV="${ULTIMATE_SCRNA_ENV:-$ENV_ROOT/ultimate-scrna}"
+REFERENCE_ROOT="${ULTIMATE_REFERENCE_ROOT:-$RUNTIME_ROOT/cache}"
 
 THREADS="${SLURM_CPUS_PER_TASK:-16}"
 export ULTIMATE_THREADS="$THREADS"
@@ -92,8 +93,12 @@ echo "[xielab_e2e] stage 2: bulk RNA-seq (DESeq2/edgeR + local GMT + customer de
 BULK_DIR="$WORK/bulk_rnaseq"
 mkdir -p "$BULK_DIR/config"
 # Real public count matrix: prefer an operator-provided GEO airway/SEQC matrix.
-PUBLIC_BULK="${ULTIMATE_E2E_BULK_MATRIX:-${ULTIMATE_REFERENCE_ROOT:-}/public_data/rnaseq_airway/counts.tsv}"
-GMT_PATH="${ULTIMATE_E2E_GMT:-${ULTIMATE_REFERENCE_ROOT:-}/msigdb/h.all.v7.5.1.symbols.gmt}"
+PUBLIC_BULK="${ULTIMATE_E2E_BULK_MATRIX:-$REFERENCE_ROOT/public_data/rnaseq_airway/counts.tsv}"
+BULK_SHEET="${ULTIMATE_E2E_BULK_SAMPLESHEET:-$WORK/bulk_rnaseq/samplesheet.tsv}"
+if [[ ! -f "$BULK_SHEET" && -f "$(dirname -- "$PUBLIC_BULK")/samplesheet.tsv" ]]; then
+  BULK_SHEET="$(dirname -- "$PUBLIC_BULK")/samplesheet.tsv"
+fi
+GMT_PATH="${ULTIMATE_E2E_GMT:-$REFERENCE_ROOT/msigdb/h.all.v7.5.1.symbols.gmt}"
 if [[ -f "$PUBLIC_BULK" ]]; then
   cat > "$BULK_DIR/config/project.yaml" <<YAML
 project:
@@ -109,23 +114,33 @@ modules:
     enabled: true
     analysis_level: validated_backend
     input_matrix: $PUBLIC_BULK
-    samplesheet: $WORK/bulk_rnaseq/samplesheet.tsv
+    samplesheet: $BULK_SHEET
     backends: {de: deseq2_edger}
 YAML
-  if [[ ! -f "$WORK/bulk_rnaseq/samplesheet.tsv" ]]; then
-    echo "[xielab_e2e] samplesheet missing: $WORK/bulk_rnaseq/samplesheet.tsv (column: sample_id, condition)" >&2
+  if [[ ! -f "$BULK_SHEET" ]]; then
+    echo "[xielab_e2e] samplesheet missing: $BULK_SHEET (column: sample_id, condition)" >&2
     record "02_bulk_rnaseq" "blocked" "$LOGS/02_bulk.log" "missing_samplesheet"
   fi
-  if [[ -f "$WORK/bulk_rnaseq/samplesheet.tsv" ]]; then
+  if [[ -f "$BULK_SHEET" ]]; then
     if "$ULTIMATE_BIN" run --config "$BULK_DIR/config/project.yaml" --threads "$THREADS" > "$LOGS/02_bulk.log" 2>&1; then
       RUN_DIR="$BULK_DIR/runs/bulk"
       record "02_bulk_run" "ready" "$LOGS/02_bulk.log" "$RUN_DIR"
       "$ULTIMATE_BIN" customer-package --run-dir "$RUN_DIR" > "$LOGS/02_bulk_customer.log" 2>&1 \
         && record "02_bulk_customer_package" "ready" "$LOGS/02_bulk_customer.log" "" \
         || record "02_bulk_customer_package" "failed" "$LOGS/02_bulk_customer.log" "customer-package non-zero"
-      "$ULTIMATE_BIN" delivery-check --run-dir "$RUN_DIR" > "$LOGS/02_bulk_delivery.json" 2>&1 \
-        && record "02_bulk_delivery_check" "ready" "$LOGS/02_bulk_delivery.json" "" \
-        || record "02_bulk_delivery_check" "blocked" "$LOGS/02_bulk_delivery.json" "delivery-check blocked (expected if gates unmet)"
+      if "$ULTIMATE_BIN" delivery-check --run-dir "$RUN_DIR" > "$LOGS/02_bulk_delivery.json" 2> "$LOGS/02_bulk_delivery.err"; then
+        record "02_bulk_delivery_check" "ready" "$LOGS/02_bulk_delivery.json" ""
+      elif "$PY" - "$LOGS/02_bulk_delivery.json" <<'PY' 2>/dev/null
+import json, sys
+from pathlib import Path
+d = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert d.get("delivery_allowed") is False
+PY
+      then
+        record "02_bulk_delivery_check" "ready" "$LOGS/02_bulk_delivery.json" "gate_blocked_as_expected_for_validated_backend"
+      else
+        record "02_bulk_delivery_check" "blocked" "$LOGS/02_bulk_delivery.json" "delivery-check blocked unexpectedly"
+      fi
       "$PY" - "$RUN_DIR" <<'PY' && record "02_bulk_enrichment" "ready" "$LOGS/02_bulk.log" "" || record "02_bulk_enrichment" "skipped" "$LOGS/02_bulk.log" "no_enrichment_results"
 import json, sys
 from pathlib import Path
@@ -149,14 +164,37 @@ fi
 
 # ---------------------------------------------------------------- stage 3
 echo "[xielab_e2e] stage 3: scRNA-seq (CellTypist + paired edgeR + batch smoke)"
-SCRNA_INPUT="${ULTIMATE_E2E_SCRNA_INPUT:-${ULTIMATE_REFERENCE_ROOT:-}/public_data/scrna/kang18_8vs8.h5ad}"
+SCRNA_INPUT="${ULTIMATE_E2E_SCRNA_INPUT:-$REFERENCE_ROOT/public_data/scrna/kang18_8vs8.h5ad}"
 SCRNA_DIR="$WORK/scrna"
 mkdir -p "$SCRNA_DIR"
 if [[ -f "$SCRNA_INPUT" && -x "$SCRN_ENV/bin/python" ]]; then
-  if PATH="$SCRN_ENV/bin:$PATH" "$ULTIMATE_BIN" validate-scrna \
-      --input-path "$SCRNA_INPUT" --input-type h5ad \
-      --output-dir "$SCRNA_DIR/run" --max-cells 5000 --threads "$THREADS" \
-      > "$LOGS/03_scrna.log" 2>&1; then
+  if "$SCRN_ENV/bin/python" - "$SCRNA_INPUT" "$SCRNA_DIR/run" "$THREADS" "${ULTIMATE_E2E_CELLTYPIST_MODEL:-}" <<'PY' > "$LOGS/03_scrna.log" 2>&1
+import json, sys
+from pathlib import Path
+from ultimate.runtime import apply_thread_budget, thread_budget
+from ultimate.scrna_smoke import run_scrna_validation
+
+inp = Path(sys.argv[1])
+out = Path(sys.argv[2])
+th = int(sys.argv[3])
+ct_model = Path(sys.argv[4]) if sys.argv[4] else None
+with apply_thread_budget(thread_budget({}, th)):
+    manifest = run_scrna_validation(
+        input_path=inp,
+        input_type="h5ad",
+        output_dir=out,
+        max_cells=5000,
+        random_seed=7,
+        analysis_level="validated_backend",
+        public_dataset=True,
+        dataset_label=inp.stem,
+        celltypist_model=ct_model,
+    )
+print(json.dumps(manifest, indent=2, ensure_ascii=False))
+if manifest.get("status") != "ready":
+    raise SystemExit(1)
+PY
+  then
     record "03_scrna_mvp" "ready" "$LOGS/03_scrna.log" "$SCRNA_DIR/run"
   else
     record "03_scrna_mvp" "failed" "$LOGS/03_scrna.log" "validate-scrna non-zero"
@@ -180,9 +218,13 @@ fi
 echo "[xielab_e2e] stage 4: proteomics limma + clinical survival + report render"
 PROT_DIR="$WORK/proteomics"
 mkdir -p "$PROT_DIR/config"
-PROT_MATRIX="${ULTIMATE_E2E_PROTEOMICS_MATRIX:-}"
-CLIN_TABLE="${ULTIMATE_E2E_CLINICAL:-}"
-if [[ -n "$PROT_MATRIX" && -f "$PROT_MATRIX" ]]; then
+PROT_MATRIX="${ULTIMATE_E2E_PROTEOMICS_MATRIX:-$REFERENCE_ROOT/public_data/proteomics/counts.tsv}"
+PROT_SHEET="${ULTIMATE_E2E_PROTEOMICS_SAMPLESHEET:-$PROT_DIR/samplesheet.tsv}"
+if [[ ! -f "$PROT_SHEET" && -f "$(dirname -- "$PROT_MATRIX")/samplesheet.tsv" ]]; then
+  PROT_SHEET="$(dirname -- "$PROT_MATRIX")/samplesheet.tsv"
+fi
+CLIN_TABLE="${ULTIMATE_E2E_CLINICAL:-$REFERENCE_ROOT/public_data/clinical/clinical.tsv}"
+if [[ -n "$PROT_MATRIX" && -f "$PROT_MATRIX" && -f "$PROT_SHEET" ]]; then
   cat > "$PROT_DIR/config/project.yaml" <<YAML
 project:
   name: xielab_e2e_proteomics
@@ -195,7 +237,7 @@ modules:
     enabled: true
     analysis_level: validated_backend
     input_matrix: $PROT_MATRIX
-    samplesheet: $PROT_DIR/samplesheet.tsv
+    samplesheet: $PROT_SHEET
 YAML
   if "$ULTIMATE_BIN" run --config "$PROT_DIR/config/project.yaml" --threads "$THREADS" > "$LOGS/04_proteomics.log" 2>&1; then
     record "04_proteomics_limma" "ready" "$LOGS/04_proteomics.log" ""
@@ -203,7 +245,7 @@ YAML
     record "04_proteomics_limma" "failed" "$LOGS/04_proteomics.log" "run non-zero"
   fi
 else
-  record "04_proteomics_limma" "skipped" "$LOGS/04_proteomics.log" "proteomics_matrix_not_provided"
+  record "04_proteomics_limma" "skipped" "$LOGS/04_proteomics.log" "proteomics_matrix_or_samplesheet_not_provided"
 fi
 if [[ -n "$CLIN_TABLE" && -f "$CLIN_TABLE" ]]; then
   SURV_DIR="$WORK/survival"

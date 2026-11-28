@@ -185,3 +185,11 @@ def test_setup_runtime_envs_initializes_manifests_and_installs_core():
     envs_core = (REPO_ROOT / "envs" / "xielab.core.yml").read_text(encoding="utf-8")
     assert "setuptools" in envs_core
     assert "wheel" in envs_core
+
+
+def test_e2e_suite_resolves_runtime_cache_samplesheets_and_scrna_env():
+    text = (REPO_ROOT / "slurm" / "xielab_e2e_regression_suite.sbatch").read_text(encoding="utf-8")
+    assert 'REFERENCE_ROOT="${ULTIMATE_REFERENCE_ROOT:-$RUNTIME_ROOT/cache}"' in text
+    assert 'ULTIMATE_E2E_BULK_SAMPLESHEET' in text
+    assert 'ULTIMATE_E2E_PROTEOMICS_SAMPLESHEET' in text
+    assert '"$SCRN_ENV/bin/python"' in text

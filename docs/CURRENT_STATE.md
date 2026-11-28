@@ -1,11 +1,18 @@
 # Ultimate 当前状态基线
 
-更新时间：2026-11-26（M1–M5 合并后基线）
+更新时间：2026-11-28（M1–M6 全线验收通过基线）
 
 ## 服务器基线
 
-- 正式根目录：`${ULTIMATE_ROOT}`
-- 当前体积约：`27G`
+- 正式代码根：`/dshare/xielab/analysisdata/TFC/shennq/ultimate`（当前合流同步至 `NanqiShen/ultimate:main`，保留集群本地未跟踪 `AGENTS.md`）
+- 运行时根：`/dshare/xielab/analysisdata/TFC/shennq/ultimate_runtime`（当前总占用约 `36G` / `500G` 预算）
+- 四套 `micromamba` 环境全部 `ready`：
+  - `ultimate-upstream`（`213484`：`fastp 1.4.0`、`salmon 2.12.0`、`STAR 2.7.10b`、`samtools 1.25`、`fastqc 0.13.0`、`multiqc 1.35`、`featureCounts`、`alevin-fry` + `3M-february-2018.txt`）
+  - `ultimate-core`（`213485`：Python `3.11.16` + `ultimate-bioinfo 0.1.1rc1` + `lifelines`/`scipy`）
+  - `ultimate-bio-r`（`213485`：`limma`/`DESeq2`/`edgeR`/`WGCNA`/`clusterProfiler`/`fgsea`/`survival`/`survminer`）
+  - `ultimate-scrna`（`213494`：`scanpy 1.11.5`、`anndata 0.12.19`、`harmonypy 2.1.0`、`squidpy 1.8.2`、`gseapy 1.3.2`、`celltypist 1.7.1`、`decoupler 2.2.0`、`liana 1.10.0`）
+  - 集群运维提示：计算节点 `node68` 存在外网 DNS 解析故障，建环境等需要拉取远端包时应加 `--exclude=node68`
+- GitHub Actions CI：已跑通 `hardcoded path scan`、`pytest (py3.11/py3.12)`、`wheel install smoke (py3.11/py3.12)`
 - 已完成 validation guard 标准化：`${ULTIMATE_ROOT}/audits/validation_guard_latest/validation_guard_check.tsv`
 - 验证总索引：`${ULTIMATE_ROOT}/reports/validation_index/validation_index.tsv`
 - 生产审计：`${ULTIMATE_ROOT}/audits/production_readiness_latest/production_audit.json`
@@ -61,9 +68,13 @@
   `compute_pro` 上自建 fastp/salmon/STAR 工具链；`slurm/xielab_e2e_regression_suite.sbatch`
   串联 doctor → bulk → scRNA → 蛋白/生存 → validation-index/audit-production 并输出中文
   `xielab_e2e_report.md`。部署细节见 `docs/XIELAB_OPERATIONS.md`。
+- **M6 集群端到端上游实测验收（M6-P0 + M6-P1 `PASS`）**：
+  - P0：`expected_import_project.yaml` 与 `run_manifest.json` 公共 CLI 闭环及多样本独立校验、三元组 SHA-256 绑定与 4 类反例回归全部通过；
+  - P1：在 `xielab compute_pro` 完成 Bulk Salmon（`213488` → `213490`，80 特征 × 4 样本）与 scRNA STARsolo（`213489` → `213491`，`SC_S1` 80×125 与 `SC_S2` 80×40）全链路实跑，并由 `ultimate check-upstream-acceptance` 输出 `status=pass`，结果记录于 `deliverables/m6/M6_ACCEPTANCE.json`。
 
 ## 下一推进点
 
-- 下一优先级：CopyKAT 已具备 raw-count 门禁、R 脚本与 `--ncores` 线程绑定（M4），但仍**未在集群实跑**；下一步是在 `xielab` 上以显式开关 + 小抽样完成首次真实执行，再扩展到 inferCNV。
+- 收口验证：在 `xielab compute_pro` 上以真实四环境栈执行全量 `pytest`（覆盖 R/scanpy 真后端）与 `slurm/xielab_e2e_regression_suite.sbatch` 公开基准回归。
+- 下一优先级：CopyKAT 已具备 raw-count 门禁、R 脚本与 `--ncores` 线程绑定（M4），但仍**未在集群实跑**；下一步是在 `xielab` 上以显式开关 + 小抽样完成首次真实执行，再扩展到 inferCNV，并按需补齐 Salmon `tximport` 转录本→基因汇总链路。
 - 备选方向：scATAC/Multiome fragments-level 验证、CellChat/NicheNet 通讯专项、clinical association/survival 模板。
 - 真实或较重计算继续通过 Slurm 提交，不在登录节点运行。
