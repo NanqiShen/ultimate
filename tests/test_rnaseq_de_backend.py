@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 from ultimate.backend_registry import build_backend_plan
@@ -200,3 +202,74 @@ def test_rnaseq_de_backend_ready_path_with_fake_rscript_keeps_mvp_contract(tmp_p
     status_text = Path(tables["de_backend_status"]).read_text(encoding="utf-8")
     assert "ready" in status_text
     assert "DESeq2" in status_text
+
+
+def test_rnaseq_pipeline_runs_local_enrichment_from_de_backend(tmp_path: Path, monkeypatch) -> None:
+    fake_rscript = _write_fake_rscript(tmp_path)
+    config_path = _write_config(tmp_path, rscript=fake_rscript)
+    counts = pd.DataFrame(
+        {
+            "feature_id": [f"GENE{i}" for i in range(1, 21)],
+            "CTRL_1": [100] * 10 + [20] * 10,
+            "CTRL_2": [105] * 10 + [22] * 10,
+            "TRT_1": [20] * 10 + [100] * 10,
+            "TRT_2": [22] * 10 + [105] * 10,
+        }
+    )
+    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    counts.to_csv(loaded["modules"]["rnaseq"]["input_matrix"], sep="\t", index=False)
+    gmt = tmp_path / "hallmark.gmt"
+    gmt.write_text("PATH_X\tlocal\t" + "\t".join(f"GENE{i}" for i in range(1, 15)) + "\n", encoding="utf-8")
+    loaded["resources"] = {"msigdb": str(gmt)}
+    config_path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+
+    # Fake DE Rscript writing 20 genes with log2FoldChange (matching DESeq2 output)
+    fake_rscript.write_text(
+        """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "-e" in args:
+    print("DESeq2\\t1.50.2")
+    print("edgeR\\t4.8.2")
+    print("jsonlite\\t2.0.0")
+    raise SystemExit(0)
+if "--ranked" in args:
+    out_path = Path(args[args.index("--output") + 1])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("Term\\tES\\tNES\\tNOM p-val\\tFDR q-val\\tLead_genes\\tsize\\nPATH_X\\t0.6\\t1.7\\t0.01\\t0.02\\tGENE1;GENE2\\t14\\n", encoding="utf-8")
+    raise SystemExit(0)
+tables = Path(args[args.index("--tables-dir") + 1])
+figures = Path(args[args.index("--figures-dir") + 1])
+objects = Path(args[args.index("--objects-dir") + 1])
+for d in (tables, figures, objects):
+    d.mkdir(parents=True, exist_ok=True)
+de = tables / "de_results.tsv"
+rows = ["feature_id\\tlog2FoldChange\\tstat\\tpvalue\\tpadj"] + [
+    f"GENE{i}\\t{2.5 - i * 0.25}\\t{4.0 - i * 0.4}\\t0.01\\t0.05" for i in range(1, 21)
+]
+de.write_text("\\n".join(rows) + "\\n", encoding="utf-8")
+(tables / "deseq2_edgeR_de_results.tsv").write_text(de.read_text(encoding="utf-8"), encoding="utf-8")
+(tables / "de_backend_status.tsv").write_text("backend_id\\tstatus\\tanalysis_level\\tbackend_method\\nrnaseq.de.deseq2_edger\\tready\\tsmoke_backend\\tDESeq2\\n", encoding="utf-8")
+(tables / "de_backend_versions.tsv").write_text("package\\tversion\\nDESeq2\\t1.50.2\\n", encoding="utf-8")
+(figures / "deseq2_edgeR_volcano.png").write_text("png", encoding="utf-8")
+(figures / "deseq2_edgeR_top_gene_heatmap.png").write_text("png", encoding="utf-8")
+(objects / "rnaseq_de_backend.rds").write_text("rds", encoding="utf-8")
+(tables / "de_backend_manifest.json").write_text(json.dumps({"backend_id": "rnaseq.de.deseq2_edger", "status": "ready", "backend_method": "DESeq2"}), encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    fake_rscript.chmod(0o755)
+    monkeypatch.setitem(sys.modules, "gseapy", None)
+    monkeypatch.setenv("ULTIMATE_R_ENV_RNASEQ", str(fake_rscript))
+
+    manifest = run_pipeline_from_config(config_path)
+    tables = manifest["modules"][0]["artifacts"]["tables"]
+    figures = manifest["modules"][0]["artifacts"]["figures"]
+    status = pd.read_csv(tables["enrichment_backend_status"], sep="\t")
+    assert status.iloc[0]["status"] == "ready", status.to_dict(orient="records")
+    assert manifest["modules"][0]["rnaseq_de_backend"]["status"] == "ready"
+    assert Path(tables["enrichment_results"]).is_file()
+    assert Path(figures["enrichment_dotplot"]).is_file()

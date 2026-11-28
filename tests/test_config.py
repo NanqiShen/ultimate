@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ultimate.config import enabled_modules, load_config
+from ultimate.config import enabled_modules, load_config, load_samples
 from ultimate.demo import init_project
 
 
@@ -13,3 +13,11 @@ def test_init_project_and_load_config(tmp_path: Path) -> None:
     assert enabled_modules(loaded.raw) == ["rnaseq"]
     assert Path(loaded.raw["modules"]["rnaseq"]["input_matrix"]).exists()
     assert (Path(manifest["output_dir"]) / "intake" / "customer_project_intake.tsv").exists()
+
+
+def test_load_samples_falls_back_to_enabled_module_samplesheet(tmp_path: Path) -> None:
+    sheet = tmp_path / "samples.tsv"
+    sheet.write_text("sample_id\tcondition\nS1\tcontrol\nS2\ttreated\n", encoding="utf-8")
+    frame = load_samples({"modules": {"rnaseq": {"enabled": True, "samplesheet": str(sheet)}}})
+    assert list(frame["sample_id"]) == ["S1", "S2"]
+    assert list(frame["condition"]) == ["control", "treated"]

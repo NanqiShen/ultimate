@@ -109,16 +109,6 @@ def run_bulk_module(
 
     artifacts["tables"].update(_write_common_tables(module_name, matrix, stats, samples, inputs, tables_dir))
     artifacts["tables"].update(_write_module_tables(module_name, matrix, stats, samples, inputs, tables_dir, module_cfg))
-    if module_name in {"rnaseq", "proteomics", "methylation"} and "de_results" in (artifacts["tables"] or {}):
-        enrichment = _run_local_enrichment(
-            config=config,
-            module_name=module_name,
-            de_table_path=Path(str(artifacts["tables"]["de_results"])),
-            output_dir=output_dir,
-            analysis_level=str(level_fields.get("analysis_level") or "smoke_backend"),
-        )
-        artifacts["tables"].update(enrichment.get("artifacts", {}))
-        artifacts.setdefault("enrichment", {}).update({"status": enrichment.get("status"), "reason": enrichment.get("reason", "")})
     artifacts["figures"].update(_write_common_figures(module_name, matrix, stats, samples, figures_dir, design))
     artifacts["figures"].update(_write_module_figures(module_name, matrix, stats, samples, inputs, figures_dir, module_cfg, inputs.clinical))
     artifacts["objects"].update(_write_bulk_objects(module_name, matrix, stats, inputs, objects_dir))
@@ -183,6 +173,28 @@ def run_bulk_module(
         )
         backend_execution.append(_bulk_backend_execution_row(methylation_dmp_result, level_fields))
         _merge_backend_artifacts(artifacts, methylation_dmp_result.get("artifacts", {}))
+    if module_name in {"rnaseq", "proteomics", "methylation"}:
+        de_table_key = next(
+            (key for key in ("de_results", "limma_de_results", "dmp_limma_results", "differential_results") if key in artifacts["tables"]),
+            None,
+        )
+        if de_table_key:
+            enrichment = _run_local_enrichment(
+                config=config,
+                module_name=module_name,
+                de_table_path=Path(str(artifacts["tables"][de_table_key])),
+                output_dir=output_dir,
+                analysis_level=str(level_fields.get("analysis_level") or "smoke_backend"),
+            )
+            for key, path_str in (enrichment.get("artifacts") or {}).items():
+                if key in {"enrichment_dotplot", "enrichment_gsea_curve"}:
+                    if Path(path_str).is_file():
+                        artifacts["figures"][key] = str(path_str)
+                else:
+                    artifacts["tables"][key] = str(path_str)
+            artifacts.setdefault("enrichment", {}).update(
+                {"status": enrichment.get("status"), "reason": enrichment.get("reason", ""), "engine": enrichment.get("engine", "")}
+            )
     artifacts["tables"].update(
         write_mvp_tables(
             module_name=module_name,
@@ -822,8 +834,16 @@ def _run_proteomics_limma_backend(
         tables_dir=tables_dir, objects_dir=objects_dir,
         result_path=paths["result"], object_path=paths["object"],
     )
-    if used_r and r_result is not None and "protein_id" in r_result.columns:
-        result = r_result
+    if used_r and r_result is not None and ("protein_id" in r_result.columns or "feature_id" in r_result.columns):
+        rename_map: dict[str, str] = {}
+        if "protein_id" not in r_result.columns and "feature_id" in r_result.columns:
+            rename_map["feature_id"] = "protein_id"
+        if "log2_abundance_delta" not in r_result.columns:
+            if "log2FC" in r_result.columns:
+                rename_map["log2FC"] = "log2_abundance_delta"
+            elif "logFC" in r_result.columns:
+                rename_map["logFC"] = "log2_abundance_delta"
+        result = r_result.rename(columns=rename_map) if rename_map else r_result
         method_label = "limma::lmFit+eBayes (R)"
     else:
         result = _two_group_stats(matrix, group["control_cols"], group["case_cols"]).rename(

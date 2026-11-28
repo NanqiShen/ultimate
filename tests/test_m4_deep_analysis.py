@@ -385,12 +385,92 @@ def test_enrichment_refuses_remote_gmt_url(tmp_path: Path):
 
 def test_enrichment_skips_without_engine(tmp_path: Path, monkeypatch):
     monkeypatch.setitem(sys.modules, "gseapy", None)
+    monkeypatch.setenv("ULTIMATE_R_ENV_RNASEQ", str(tmp_path / "missing_Rscript"))
+    monkeypatch.setenv("ULTIMATE_RSCRIPT", str(tmp_path / "missing_Rscript"))
+    monkeypatch.setenv("ULTIMATE_ENV_ROOT", str(tmp_path / "no_envs"))
+    monkeypatch.setenv("PATH", str(tmp_path / "no_bin"))
     result = run_enrichment(
         de_table=_de_table(), config={"resources": {"msigdb": str(_gmt(tmp_path))}},
         module_name="rnaseq", output_dir=tmp_path / "out", analysis_level="smoke_backend",
     )
     assert result["status"] == "skipped"
     assert result["reason"] == "dependency_missing:gseapy"
+
+
+def test_enrichment_fgsea_fallback_when_gseapy_missing(tmp_path: Path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "gseapy", None)
+    fake_r = tmp_path / "fake_Rscript"
+    fake_r.write_text(
+        """#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "-e" in args:
+    raise SystemExit(0)
+out_path = Path(args[args.index("--output") + 1])
+out_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.write_text(
+    "Term\\tES\\tNES\\tNOM p-val\\tFDR q-val\\tLead_genes\\tsize\\n"
+    "PATH_A\\t0.65\\t1.85\\t0.002\\t0.01\\tGENE1;GENE2\\t15\\n",
+    encoding="utf-8",
+)
+""",
+        encoding="utf-8",
+    )
+    fake_r.chmod(0o755)
+    monkeypatch.setenv("ULTIMATE_R_ENV_RNASEQ", str(fake_r))
+
+    result = run_enrichment(
+        de_table=_de_table(), config={"resources": {"msigdb": str(_gmt(tmp_path))}},
+        module_name="rnaseq", output_dir=tmp_path / "out", analysis_level="smoke_backend",
+    )
+
+    assert result["status"] == "ready", result
+    assert result.get("engine") == "fgsea"
+    table = pd.read_csv(tmp_path / "out" / "results" / "tables" / "rnaseq" / "enrichment_results.tsv", sep="\t")
+    assert {"Term", "NES", "backend_id", "gene_set_source"}.issubset(table.columns)
+    assert (tmp_path / "out" / "results" / "figures" / "rnaseq" / "enrichment_dotplot.png").is_file()
+
+
+def test_enrichment_ranks_deseq2_log2foldchange_column(tmp_path: Path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "gseapy", None)
+    fake_r = tmp_path / "fake_Rscript"
+    fake_r.write_text(
+        """#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "-e" in args:
+    raise SystemExit(0)
+ranked_path = Path(args[args.index("--ranked") + 1])
+rows = ranked_path.read_text(encoding="utf-8").splitlines()
+assert len(rows) > 10
+out_path = Path(args[args.index("--output") + 1])
+out_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.write_text(
+    "Term\\tES\\tNES\\tNOM p-val\\tFDR q-val\\tLead_genes\\tsize\\n"
+    "PATH_DESEQ2\\t0.70\\t1.95\\t0.001\\t0.008\\tGENE1;GENE2\\t15\\n",
+    encoding="utf-8",
+)
+""",
+        encoding="utf-8",
+    )
+    fake_r.chmod(0o755)
+    monkeypatch.setenv("ULTIMATE_R_ENV_RNASEQ", str(fake_r))
+
+    deseq2_de = pd.DataFrame({
+        "feature_id": [f"GENE{i}" for i in range(1, 31)],
+        "log2FoldChange": np.linspace(2.5, -2.5, 30),
+        "padj": np.linspace(1e-4, 0.9, 30),
+    })
+    result = run_enrichment(
+        de_table=deseq2_de, config={"resources": {"msigdb": str(_gmt(tmp_path))}},
+        module_name="rnaseq", output_dir=tmp_path / "out", analysis_level="validated_backend",
+    )
+    assert result["status"] == "ready", result
+    assert result["n_ranked_genes"] == 30
 
 
 def test_enrichment_skips_with_too_few_ranked_genes(tmp_path: Path):

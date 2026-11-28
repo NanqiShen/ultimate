@@ -139,3 +139,45 @@ def test_proteomics_limma_backend_skips_when_replicates_are_insufficient(tmp_pat
     assert "insufficient_replicates" in execution["proteomics.de.limma_optional"]["reason"]
     backend_manifest = json.loads((run_dir / "results/tables/proteomics/proteomics_limma_backend_manifest.json").read_text(encoding="utf-8"))
     assert backend_manifest["delivery_allowed"] is False
+
+
+def test_proteomics_limma_backend_maps_r_feature_id_and_log2fc(tmp_path: Path, monkeypatch) -> None:
+    matrix = _write_matrix(tmp_path / "protein_abundance.tsv", "PROT")
+    fake_rscript = tmp_path / "fake_Rscript"
+    fake_rscript.write_text(
+        """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "-e" in args:
+    raise SystemExit(0)
+out_path = Path(args[args.index("--output") + 1])
+obj_path = Path(args[args.index("--object") + 1])
+out_path.parent.mkdir(parents=True, exist_ok=True)
+obj_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.write_text(
+    "feature_id\\tlogFC\\tlog2FC\\tAveExpr\\tt\\tP.Value\\tadj.P.Val\\tpadj\\tmethod\\n"
+    "PROT_001\\t8.2\\t8.2\\t16.3\\t9.1\\t0.001\\t0.004\\t0.004\\tlimma::lmFit+eBayes (R)\\n"
+    "PROT_003\\t9.3\\t9.3\\t8.0\\t7.5\\t0.002\\t0.004\\t0.004\\tlimma::lmFit+eBayes (R)\\n",
+    encoding="utf-8",
+)
+obj_path.write_text(json.dumps({"backend": "limma"}), encoding="utf-8")
+print(json.dumps({"status": "ready"}))
+""",
+        encoding="utf-8",
+    )
+    fake_rscript.chmod(0o755)
+    monkeypatch.setenv("ULTIMATE_R_ENV_PROTEOMICS", str(fake_rscript))
+    config_path = _write_config(tmp_path, "proteomics", matrix, output_name="r_limma")
+
+    manifest = run_pipeline_from_config(config_path)
+    run_dir = Path(manifest["output_dir"])
+    result = pd.read_csv(run_dir / "results/tables/proteomics/limma_de_results.tsv", sep="\t")
+
+    assert {"protein_id", "log2_abundance_delta", "padj", "method", "method_boundary"}.issubset(result.columns)
+    assert set(result["method"]) == {"limma::lmFit+eBayes (R)"}
+    assert set(result["protein_id"]) == {"PROT_001", "PROT_003"}
+    assert (run_dir / "results/figures/proteomics/proteomics_limma_volcano.png").stat().st_size > 0
+    assert (run_dir / "results/figures/proteomics/proteomics_limma_heatmap.png").stat().st_size > 0

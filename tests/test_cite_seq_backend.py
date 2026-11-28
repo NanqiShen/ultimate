@@ -164,6 +164,7 @@ objects.mkdir(parents=True, exist_ok=True)
         encoding="utf-8",
     )
     fake_rscript.chmod(0o755)
+    monkeypatch.setenv("ULTIMATE_R_ENV_CITE_SEQ", str(fake_rscript))
     monkeypatch.setenv("PATH", f"{fake_bin}:{Path('/usr/bin')}")
     config_path = _write_config(tmp_path, rna=rna, adt=adt, empty_adt=empty, output_name="dsb")
 

@@ -98,7 +98,11 @@ BULK_SHEET="${ULTIMATE_E2E_BULK_SAMPLESHEET:-$WORK/bulk_rnaseq/samplesheet.tsv}"
 if [[ ! -f "$BULK_SHEET" && -f "$(dirname -- "$PUBLIC_BULK")/samplesheet.tsv" ]]; then
   BULK_SHEET="$(dirname -- "$PUBLIC_BULK")/samplesheet.tsv"
 fi
-GMT_PATH="${ULTIMATE_E2E_GMT:-$REFERENCE_ROOT/msigdb/h.all.v7.5.1.symbols.gmt}"
+DEFAULT_GMT="$REFERENCE_ROOT/msigdb/h.all.v7.5.1.symbols.gmt"
+if [[ ! -f "$DEFAULT_GMT" && -f "$REFERENCE_ROOT/public_data/msigdb/h.all.v7.5.1.symbols.gmt" ]]; then
+  DEFAULT_GMT="$REFERENCE_ROOT/public_data/msigdb/h.all.v7.5.1.symbols.gmt"
+fi
+GMT_PATH="${ULTIMATE_E2E_GMT:-$DEFAULT_GMT}"
 if [[ -f "$PUBLIC_BULK" ]]; then
   cat > "$BULK_DIR/config/project.yaml" <<YAML
 project:
@@ -107,11 +111,18 @@ project:
   output_dir: $BULK_DIR/runs/bulk
   run_mode: interactive
   is_demo: false
+samples:
+  samplesheet: $BULK_SHEET
+design:
+  condition_column: condition
+  control: control
+  case: treated
 resources:
   msigdb: $GMT_PATH
 modules:
   rnaseq:
     enabled: true
+    preset: publication
     analysis_level: validated_backend
     input_matrix: $PUBLIC_BULK
     samplesheet: $BULK_SHEET
@@ -232,15 +243,40 @@ project:
   output_dir: $PROT_DIR/runs/proteomics
   run_mode: interactive
   is_demo: false
+samples:
+  samplesheet: $PROT_SHEET
+design:
+  condition_column: condition
+  control: control
+  case: treated
 modules:
   proteomics:
     enabled: true
+    preset: publication
     analysis_level: validated_backend
     input_matrix: $PROT_MATRIX
     samplesheet: $PROT_SHEET
 YAML
   if "$ULTIMATE_BIN" run --config "$PROT_DIR/config/project.yaml" --threads "$THREADS" > "$LOGS/04_proteomics.log" 2>&1; then
-    record "04_proteomics_limma" "ready" "$LOGS/04_proteomics.log" ""
+    if "$PY" - "$PROT_DIR/runs/proteomics/results/tables/proteomics/limma_de_results.tsv" <<'PY' >> "$LOGS/04_proteomics.log" 2>&1
+import sys
+from pathlib import Path
+import pandas as pd
+
+limma_tsv = Path(sys.argv[1])
+if not limma_tsv.is_file():
+    raise SystemExit("missing limma_de_results.tsv")
+df = pd.read_csv(limma_tsv, sep="\t")
+methods = set(df.get("method", pd.Series(dtype=str)).astype(str))
+print("proteomics methods:", sorted(methods))
+if "limma::lmFit+eBayes (R)" not in methods:
+    raise SystemExit(f"expected R limma backend, got {sorted(methods)}")
+PY
+    then
+      record "04_proteomics_limma" "ready" "$LOGS/04_proteomics.log" ""
+    else
+      record "04_proteomics_limma" "failed" "$LOGS/04_proteomics.log" "proteomics_limma_not_r_engine"
+    fi
   else
     record "04_proteomics_limma" "failed" "$LOGS/04_proteomics.log" "run non-zero"
   fi
